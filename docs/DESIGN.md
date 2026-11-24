@@ -7,7 +7,7 @@ Status: draft, 2026-11-24. Nothing is built yet.
 Every pull request in every go-steer repository gets an independent AI code
 review, and that review gates the merge. Today the gate is a self-written
 "## Adversarial review" section in the PR description, checked for length by
-`review-gate` in 6 of 17 active repos. On core-agent, `main` requires 8
+`review-gate` in 7 of 17 active repos. On core-agent, `main` requires 8
 status checks and zero approving reviews.
 
 surveyor replaces the self-attested section with an actual review by a
@@ -23,6 +23,8 @@ any GitHub org it is installed in.
 | 2026-11-24 | GitHub App on GKE, not GitHub Actions | The App's key can approve PRs org-wide; Actions secrets would let anyone who can edit a workflow mint approvals (§3) |
 | 2026-11-24 | Claude Sonnet by default, Claude Opus when escalated, Gemini 4 Neon as optional second opinion | Most code is Gemini-written; a different model family is less likely to share its blind spots (§5) |
 | 2026-11-24 | Public repo `go-steer/surveyor` | Same as the other go-steer components |
+| 2026-11-24 | Coding agents open PRs as their own GitHub App, `go-steer-agent`; commits stay authored by the maintainer | Code-owner review only means a human reviewed if agents can't approve or bypass as that human ([agent-identity.md](./agent-identity.md)) |
+| 2026-11-24 | Repo admins are the only ruleset bypass, in "pull requests only" mode; `v*` tags are admin-only | A solo maintainer can't approve their own PRs; bypass is tied to identity, so agents on the App can't use it |
 
 ## 2. Non-goals
 
@@ -197,9 +199,17 @@ and the verifier pass runs in a separate context.
 - Require review from Code Owners.
 - Require conversation resolution, so open surveyor threads block the merge.
 - Required status checks: the repo's deterministic checks plus `surveyor`.
-- **No bypass actors**: not surveyor, not go-steer-bot, not admins'
-  automation. If an emergency bypass is wanted, give it to a human only, in
-  "pull requests only" mode, so each use is visible on the PR.
+- **Bypass:** the repository admin role only, in "pull requests only" mode,
+  so each use is visible on the PR. Never surveyor, go-steer-bot or
+  go-steer-agent. A solo maintainer needs this for PRs they write themselves
+  to owned paths, since GitHub won't let them approve their own PR.
+- A tag ruleset: only admins create, move or delete `v*` tags, since the
+  agent App's `contents: write` would otherwise allow pushing a release tag.
+
+**Applied to this repo on 2026-11-24** (rulesets `main` and `release tags`),
+with one difference: the required approval count is 0 until the surveyor App
+exists, so non-owned changes don't need a bypass in the meantime. Raise it to
+1 when surveyor starts approving.
 
 ### 6.4 How bots are kept from editing CODEOWNERS
 
@@ -228,12 +238,11 @@ There are three kinds of automation to consider.
    own PR, so agent PRs opened as `mastersingh24` that touch owned paths
    cannot get the code-owner approval at all.
 
-   The fix is to give coding agents their own identity (a GitHub App, e.g.
-   `go-steer-agent`) and keep the human's token out of agent environments.
-   Then agent PRs are approved by surveyor, or by the human code owner for
-   owned paths. **Open decision** (§10): this interacts with the
-   no-agent-attribution rule, because PRs, and possibly squash-merge commits,
-   would show the App as author.
+   **Decided:** coding agents get their own GitHub App, `go-steer-agent`, and
+   the maintainer's token is removed from agent environments. Agents keep
+   authoring commits as the maintainer; the App only pushes branches and
+   opens PRs. Agent PRs are approved by surveyor, or by the maintainer on
+   owned paths. Setup and permissions: [agent-identity.md](./agent-identity.md).
 
 ### 6.5 Config cannot weaken the gate
 
@@ -380,9 +389,8 @@ the existing backlog doesn't block adoption.
 
 ## 10. Open questions
 
-1. **Agent identity (§6.4).** Give coding agents their own GitHub App
-   identity, and how to square PR authorship by that App with the
-   no-agent-attribution rule.
+1. **Squash-merge credit.** Confirm who GitHub records as the author of a
+   squash commit for a PR opened by `go-steer-agent` (agent-identity.md).
 2. **Approval counting.** Confirm by test which App permission makes
    surveyor's approval count toward required reviews (pull requests write
    vs. contents write), and keep the minimum that works.
