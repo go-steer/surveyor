@@ -26,6 +26,8 @@ any GitHub org it is installed in.
 | 2026-11-24 | Coding agents open PRs as their own GitHub App, `go-steer-deckhand`; commits stay authored by the maintainer | Code-owner review only means a human reviewed if agents can't approve or bypass as that human ([agent-identity.md](./agent-identity.md)) |
 | 2026-11-24 | New repos are created by `go-steer-shipyard` through an issue-triggered workflow that waits for the maintainer's approval | On GitHub Free, the permission that creates repos also edits rulesets; org-level rulesets need Team or Enterprise ([agent-identity.md](./agent-identity.md#creating-repos-go-steer-shipyard)) |
 | 2026-11-24 | No org-level rulesets; repo rulesets, shipyard and a nightly drift check instead | Org rulesets need GitHub Team or Enterprise (go-steer is on Free). No agent holds repo admin, shipyard applies rulesets at creation, and the drift check flags any repo whose rulesets differ from the standard |
+| 2026-11-24 | Rebase merges only; agents squash their branch to one commit first | A squash merge makes the PR opener (go-steer-deckhand) the commit author, which breaks the no-agent-attribution rule; a rebase merge keeps the maintainer as author (surveyor#4) |
+| 2026-11-24 | GCP project `go-steer-drydock` hosts the surveyor service and the deckhand key | One project for go-steer automation, apart from the shared demo project |
 | 2026-11-24 | Repo admins are the only ruleset bypass, in "pull requests only" mode; `v*` tags are admin-only | A solo maintainer can't approve their own PRs; bypass is tied to identity, so agents on the App can't use it |
 
 ## 2. Non-goals

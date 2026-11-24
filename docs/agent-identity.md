@@ -43,9 +43,32 @@ still credit the maintainer. The App appears only as the PR's opener. The
 no-agent-attribution scanner checks commits and the PR title and body, not
 the opener.
 
-**To confirm once the App exists:** open one PR with the App, squash-merge it,
-and check who GitHub records as the squash commit's author. If it is the
-App, merge agent PRs with rebase instead, or adjust the attribution rule.
+### Merging agent PRs: rebase only
+
+Tested 2026-11-24 (surveyor#4): a **squash merge** makes the PR's opener the
+author of the new commit, so a deckhand PR lands on `main` authored by
+`go-steer-deckhand[bot]`, with the maintainer only as `Co-authored-by`.
+core-agent's `verify-no-agent-attribution` fails on that commit.
+
+A **rebase merge** copies the branch's commits onto `main` unchanged, so the
+maintainer stays the author. So:
+
+- Repos allow only rebase merges: the `main` ruleset's allowed merge methods
+  are `rebase`, and the repo settings turn off squash and merge commits.
+- Agents squash their branch to one commit before merging, which keeps
+  history at one commit per PR:
+
+  ```sh
+  git fetch origin main
+  git reset --soft "$(git merge-base origin/main HEAD)"
+  git commit -m "<conventional commit title>" -m "<body>"
+  git push --force-with-lease
+  gh pr merge --rebase          # or: gh pr merge --auto --rebase
+  ```
+
+  Force-pushing the PR branch is fine; the no-force-push rule only covers
+  `main`.
+- Humans squash their own branches locally the same way.
 
 ## Create the App (maintainer, about 15 minutes)
 
@@ -97,6 +120,10 @@ read them. Then grant Workflows: Read and write. Workflow files stay
 code-owned either way.
 
 ## Point agents at it
+
+The private key can come from a file (below) or, once `go-steer-drydock`
+has billing linked, from Secret Manager there (planned:
+`AGENT_TOKEN_KEY_SECRET`), so other machines need no key file.
 
 Build the helper:
 
