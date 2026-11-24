@@ -1,6 +1,13 @@
-# Agent identity: the go-steer-agent GitHub App
+# Agent identities: go-steer-deckhand and go-steer-shipyard
 
-Status: decided 2026-11-24, not yet set up. Background is in
+Status: decided 2026-11-24, not yet set up.
+
+Two GitHub Apps, named for the crew theme:
+
+- **go-steer-deckhand** does the hands-on work and has no authority over the
+  ship: coding agents push branches and open PRs as this App.
+- **go-steer-shipyard** commissions new repos, already fitted out with the
+  baseline, and only after the maintainer approves each one. Background is in
 [DESIGN.md §6.4](./DESIGN.md#64-how-bots-are-kept-from-editing-codeowners).
 
 ## Why
@@ -27,7 +34,7 @@ injection through issues and PR comments on public repos is the other route.
 | | Who |
 |---|---|
 | Commit author | The maintainer, unchanged (`git config user.name/user.email`) |
-| Pushes branches, opens PRs, enables auto-merge | `go-steer-agent[bot]`, via `agent-token` |
+| Pushes branches, opens PRs, enables auto-merge | `go-steer-deckhand[bot]`, via `agent-token` |
 | Approves PRs | surveyor; the maintainer on code-owned paths |
 | Ruleset bypass | The maintainer only (repository admin role, "pull requests only") |
 
@@ -44,7 +51,7 @@ App, merge agent PRs with rebase instead, or adjust the attribution rule.
 
 GitHub org settings → Developer settings → GitHub Apps → New GitHub App.
 
-- **Name:** `go-steer-agent`
+- **Name:** `go-steer-deckhand`
 - **Homepage URL:** `https://github.com/go-steer/surveyor`
 - **Webhook:** uncheck "Active". The App only acts; it doesn't listen.
 - **Where can this App be installed:** Only on this account.
@@ -56,7 +63,7 @@ GitHub org settings → Developer settings → GitHub Apps → New GitHub App.
 | Contents | Read and write | Push branches. `v*` tags are blocked by each repo's tag ruleset |
 | Pull requests | Read and write | Open PRs, reply to review threads, enable auto-merge |
 | Issues | Read and write | File and comment on issues |
-| Actions | Read | Read CI logs to fix failures |
+| Actions | Read | Read CI logs to fix failures. Not write: that would let agents manually trigger any workflow, including core-agent's `release.yml` |
 | Checks | Read | See check results |
 | Commit statuses | Read | See status results |
 | Metadata | Read | Required by GitHub |
@@ -70,7 +77,7 @@ After creating it:
 
 1. Note the App ID (or client ID).
 2. Generate a private key. Store it where agents run with owner-only
-   permissions, e.g. `~/.config/go-steer-agent/key.pem` (`chmod 600`). For
+   permissions, e.g. `~/.config/go-steer-deckhand/key.pem` (`chmod 600`). For
    agents on GKE, keep it in Secret Manager and mount it.
 3. Install the App on go-steer with **Only select repositories**: start with
    `surveyor` and `core-agent`, then add repos as their baseline issues land.
@@ -101,7 +108,7 @@ In the environment agents run in:
 
 ```sh
 export AGENT_TOKEN_APP_ID=<App ID or client ID>
-export AGENT_TOKEN_KEY_FILE=$HOME/.config/go-steer-agent/key.pem
+export AGENT_TOKEN_KEY_FILE=$HOME/.config/go-steer-deckhand/key.pem
 # AGENT_TOKEN_OWNER defaults to go-steer
 
 # git: fetch and push as the App.
@@ -124,6 +131,37 @@ Some `gh` commands don't work with installation tokens (for example
 `gh api user`, which needs a user). Pull requests, issues, checks and
 `gh pr merge --auto` do.
 
+## Creating repos: go-steer-shipyard
+
+On GitHub Free, the permission that creates repos (Administration: write) also
+edits every repo's rulesets, and org-level rulesets, which agents couldn't
+reach, need GitHub Team or Enterprise. So deckhand cannot create repos, and
+repo creation goes through a workflow that waits for the maintainer:
+
+1. An agent (as deckhand) opens an issue in `go-steer/.github` from a
+   "New repository" issue form: name, description, visibility, language.
+2. A workflow triggered by the issue validates the fields strictly (the issue
+   body is untrusted input) and pauses on an environment that requires the
+   maintainer's approval.
+3. The maintainer approves in the browser or the GitHub mobile app.
+4. The workflow, authenticated as go-steer-shipyard, creates the repo with the
+   baseline already applied: `main` and tag rulesets, `CODEOWNERS`,
+   `dependabot.yml`, secret scanning and push protection, CodeQL default setup.
+   It comments the result on the issue and closes it.
+
+**go-steer-shipyard permissions:** Administration, Contents and Workflows:
+read and write; Metadata: read. Installed on **All repositories**, so repos it
+creates are covered automatically. No webhook.
+
+**Its private key never goes to an agent.** The maintainer stores it as a
+secret on the approval environment in `go-steer/.github`, with deployment
+limited to `main`. A modified workflow on a branch can't reach it, and every
+use needs the maintainer's approval.
+
+If the org moves to a plan with org-level rulesets, the gate can move there
+(bypass: org owners only), and deckhand could get Administration: write to
+create repos directly.
+
 ## Repo changes that go with it
 
 Each repo's baseline issue covers these:
@@ -133,6 +171,6 @@ Each repo's baseline issue covers these:
   only bypass, in "pull requests only" mode. A tag ruleset so only admins can
   create, move or delete `v*` tags, because `contents: write` would otherwise
   let the App push a release tag.
-- **Do not** add `go-steer-agent[bot]` to `review-gate`'s bot exemption. Its
+- **Do not** add `go-steer-deckhand[bot]` to `review-gate`'s bot exemption. Its
   PRs are agent-written code and get reviewed like any other.
 - **Do not** add it to any bypass list.
