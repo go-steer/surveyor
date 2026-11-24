@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -192,6 +193,69 @@ func TestRunRequiresConfig(t *testing.T) {
 	code := run(context.Background(), nil, func(string) string { return "" }, strings.NewReader(""), &out, &errOut)
 	if code != 1 || !strings.Contains(errOut.String(), "AGENT_TOKEN_APP_ID") {
 		t.Fatalf("code=%d stderr=%q; want a config error naming AGENT_TOKEN_APP_ID", code, errOut.String())
+	}
+}
+
+func TestNewSourceConfig(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	dir := t.TempDir()
+	cases := []struct {
+		name    string
+		vars    map[string]string
+		wantErr string
+	}{
+		{"no app ID", map[string]string{"AGENT_TOKEN_KEY_FILE": "k"}, "AGENT_TOKEN_APP_ID"},
+		{"no key source", map[string]string{"AGENT_TOKEN_APP_ID": "1"}, "AGENT_TOKEN_KEY_FILE or AGENT_TOKEN_KEY_SECRET"},
+		{"both key sources", map[string]string{"AGENT_TOKEN_APP_ID": "1", "AGENT_TOKEN_KEY_FILE": "k", "AGENT_TOKEN_KEY_SECRET": "projects/p/secrets/s"}, "only one"},
+		{"malformed secret", map[string]string{"AGENT_TOKEN_APP_ID": "1", "AGENT_TOKEN_KEY_SECRET": "deckhand-key"}, "AGENT_TOKEN_KEY_SECRET"},
+		{"file", map[string]string{"AGENT_TOKEN_APP_ID": "1", "AGENT_TOKEN_KEY_FILE": "k", "AGENT_TOKEN_CACHE_DIR": dir}, ""},
+		{"secret", map[string]string{"AGENT_TOKEN_APP_ID": "1", "AGENT_TOKEN_KEY_SECRET": "projects/p/secrets/s", "AGENT_TOKEN_CACHE_DIR": dir}, ""},
+	}
+	for _, c := range cases {
+		_, err := newSource(env(c.vars))
+		switch {
+		case c.wantErr == "" && err != nil:
+			t.Errorf("%s: unexpected error %v", c.name, err)
+		case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+			t.Errorf("%s: err = %v, want it to mention %q", c.name, err, c.wantErr)
+		}
+	}
+}
+
+func TestKeyNotLoadedWhenCachedTokenIsValid(t *testing.T) {
+	src, _ := newTestSource(t, time.Hour)
+	if _, err := src.token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh source with the same cache must not touch the key at all.
+	loads := 0
+	fresh := &source{
+		newClient: func(context.Context) (*ghapp.Client, error) {
+			loads++
+			return nil, errors.New("key source unavailable")
+		},
+		owner:     src.owner,
+		cachePath: src.cachePath,
+		now:       src.now,
+	}
+	tok, err := fresh.token(context.Background())
+	if err != nil || tok.Value != "ghs_1" {
+		t.Fatalf("token = %q, %v; want the cached token", tok.Value, err)
+	}
+	if loads != 0 {
+		t.Fatalf("key loaded %d times with a valid cached token, want 0", loads)
+	}
+}
+
+func TestKeyLoadErrorSurfacesWhenMinting(t *testing.T) {
+	src := &source{
+		newClient: func(context.Context) (*ghapp.Client, error) { return nil, errors.New("permission denied on secret") },
+		owner:     "go-steer",
+		cachePath: filepath.Join(t.TempDir(), "c.json"),
+		now:       func() time.Time { return testNow },
+	}
+	if _, err := src.token(context.Background()); err == nil || !strings.Contains(err.Error(), "permission denied on secret") {
+		t.Fatalf("err = %v, want the key-load error", err)
 	}
 }
 

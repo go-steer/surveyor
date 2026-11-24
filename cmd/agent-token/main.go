@@ -24,13 +24,18 @@
 // Configuration (environment):
 //
 //	AGENT_TOKEN_APP_ID      App ID or client ID (required)
-//	AGENT_TOKEN_KEY_FILE    path to the App's PEM private key (required)
+//	AGENT_TOKEN_KEY_FILE    path to the App's PEM private key, or
+//	AGENT_TOKEN_KEY_SECRET  Secret Manager secret holding it, read with
+//	                        Application Default Credentials, e.g.
+//	                        projects/go-steer-drydock/secrets/deckhand-key
+//	                        (exactly one of the two is required)
 //	AGENT_TOKEN_OWNER       installation owner (default "go-steer")
 //	AGENT_TOKEN_CACHE_DIR   token cache (default <user cache dir>/agent-token)
 //
 // Tokens last an hour. agent-token caches one and mints a new one when less
 // than ten minutes remain, so calling it before every gh or git command is
-// cheap. See docs/agent-identity.md for setup.
+// cheap. The private key is loaded only when minting, so a cached token
+// costs no file or Secret Manager read. See docs/agent-identity.md.
 package main
 
 import (
@@ -48,6 +53,7 @@ import (
 	"time"
 
 	"github.com/go-steer/surveyor/internal/ghapp"
+	"github.com/go-steer/surveyor/internal/gsecret"
 )
 
 const (
@@ -125,25 +131,57 @@ func wantsGitHub(r io.Reader) bool {
 
 // source mints tokens and caches them on disk.
 type source struct {
+	// client is built on first use by newClient, so the private key is
+	// read only when a token has to be minted. Tests set client directly.
 	client    *ghapp.Client
+	newClient func(context.Context) (*ghapp.Client, error)
 	owner     string
 	cachePath string
 	now       func() time.Time
 }
 
+func (s *source) appClient(ctx context.Context) (*ghapp.Client, error) {
+	if s.client == nil {
+		if s.newClient == nil {
+			return nil, errors.New("no GitHub App client configured")
+		}
+		c, err := s.newClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.client = c
+	}
+	return s.client, nil
+}
+
 func newSource(getenv func(string) string) (*source, error) {
 	appID := getenv("AGENT_TOKEN_APP_ID")
 	keyFile := getenv("AGENT_TOKEN_KEY_FILE")
-	if appID == "" || keyFile == "" {
-		return nil, errors.New("AGENT_TOKEN_APP_ID and AGENT_TOKEN_KEY_FILE must be set")
+	keySecret := getenv("AGENT_TOKEN_KEY_SECRET")
+	if appID == "" {
+		return nil, errors.New("AGENT_TOKEN_APP_ID must be set")
 	}
-	pemBytes, err := os.ReadFile(keyFile) // #nosec G304 -- path is the operator's own config
-	if err != nil {
-		return nil, fmt.Errorf("read private key: %w", err)
-	}
-	key, err := ghapp.ParsePrivateKey(pemBytes)
-	if err != nil {
-		return nil, err
+	var loadKey func(context.Context) ([]byte, error)
+	switch {
+	case keyFile != "" && keySecret != "":
+		return nil, errors.New("set only one of AGENT_TOKEN_KEY_FILE and AGENT_TOKEN_KEY_SECRET")
+	case keyFile != "":
+		loadKey = func(context.Context) ([]byte, error) {
+			b, err := os.ReadFile(keyFile) // #nosec G304 -- path is the operator's own config
+			if err != nil {
+				return nil, fmt.Errorf("read private key: %w", err)
+			}
+			return b, nil
+		}
+	case keySecret != "":
+		if _, err := gsecret.VersionName(keySecret); err != nil {
+			return nil, fmt.Errorf("AGENT_TOKEN_KEY_SECRET: %w", err)
+		}
+		loadKey = func(ctx context.Context) ([]byte, error) {
+			return (&gsecret.Client{}).Access(ctx, keySecret)
+		}
+	default:
+		return nil, errors.New("set AGENT_TOKEN_KEY_FILE or AGENT_TOKEN_KEY_SECRET")
 	}
 	owner := getenv("AGENT_TOKEN_OWNER")
 	if owner == "" {
@@ -158,7 +196,17 @@ func newSource(getenv func(string) string) (*source, error) {
 		dir = filepath.Join(base, "agent-token")
 	}
 	return &source{
-		client:    &ghapp.Client{AppID: appID, Key: key},
+		newClient: func(ctx context.Context) (*ghapp.Client, error) {
+			pemBytes, err := loadKey(ctx)
+			if err != nil {
+				return nil, err
+			}
+			key, err := ghapp.ParsePrivateKey(pemBytes)
+			if err != nil {
+				return nil, err
+			}
+			return &ghapp.Client{AppID: appID, Key: key}, nil
+		},
 		owner:     owner,
 		cachePath: filepath.Join(dir, cacheName(appID, owner)),
 		now:       time.Now,
@@ -181,20 +229,24 @@ func (s *source) token(ctx context.Context) (ghapp.Token, error) {
 	if entry.Token.ValidFor(minRemaining, s.now()) {
 		return entry.Token, nil
 	}
+	client, err := s.appClient(ctx)
+	if err != nil {
+		return ghapp.Token{}, err
+	}
 	cachedID := entry.InstallationID != 0
 	if !cachedID {
 		if err := s.lookupInstallation(ctx, &entry); err != nil {
 			return ghapp.Token{}, err
 		}
 	}
-	tok, err := s.client.InstallationToken(ctx, entry.InstallationID, ghapp.TokenOptions{})
+	tok, err := client.InstallationToken(ctx, entry.InstallationID, ghapp.TokenOptions{})
 	var apiErr *ghapp.APIError
 	if cachedID && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 		// The App was reinstalled and the cached installation ID is gone.
 		if err := s.lookupInstallation(ctx, &entry); err != nil {
 			return ghapp.Token{}, err
 		}
-		tok, err = s.client.InstallationToken(ctx, entry.InstallationID, ghapp.TokenOptions{})
+		tok, err = client.InstallationToken(ctx, entry.InstallationID, ghapp.TokenOptions{})
 	}
 	if err != nil {
 		return ghapp.Token{}, err
@@ -207,7 +259,11 @@ func (s *source) token(ctx context.Context) (ghapp.Token, error) {
 }
 
 func (s *source) lookupInstallation(ctx context.Context, entry *cacheEntry) error {
-	id, err := s.client.InstallationID(ctx, s.owner)
+	client, err := s.appClient(ctx)
+	if err != nil {
+		return err
+	}
+	id, err := client.InstallationID(ctx, s.owner)
 	if err != nil {
 		return fmt.Errorf("find installation on %q (is the App installed there?): %w", s.owner, err)
 	}

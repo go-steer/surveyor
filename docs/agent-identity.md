@@ -121,9 +121,39 @@ code-owned either way.
 
 ## Point agents at it
 
-The private key can come from a file (below) or, once `go-steer-drydock`
-has billing linked, from Secret Manager there (planned:
-`AGENT_TOKEN_KEY_SECRET`), so other machines need no key file.
+### Where the private key lives
+
+Either a file on the machine (`AGENT_TOKEN_KEY_FILE`) or, preferred for every
+machine after the first, the `deckhand-key` secret in the `go-steer-drydock`
+project (`AGENT_TOKEN_KEY_SECRET`). With the secret, no key file sits on the
+machine: `agent-token` reads it with the machine's Application Default
+Credentials (a gcloud login, or Workload Identity on GKE), only when it has to
+mint a new token.
+
+The maintainer uploads the key once:
+
+```sh
+gcloud secrets versions add deckhand-key --project go-steer-drydock \
+  --data-file="$HOME/.config/go-steer-deckhand/key.pem"
+```
+
+and grants each machine's identity read access to that one secret, not the
+project:
+
+```sh
+gcloud secrets add-iam-policy-binding deckhand-key --project go-steer-drydock \
+  --member="serviceAccount:<machine-or-workload-sa>" \
+  --role=roles/secretmanager.secretAccessor
+```
+
+Revoking a machine is removing its binding. Every read appears in Cloud Audit
+Logs (Data Access logs must be enabled for Secret Manager to record reads).
+
+On a machine using the secret, set this instead of `AGENT_TOKEN_KEY_FILE`:
+
+```sh
+export AGENT_TOKEN_KEY_SECRET=projects/go-steer-drydock/secrets/deckhand-key
+```
 
 Build the helper:
 
