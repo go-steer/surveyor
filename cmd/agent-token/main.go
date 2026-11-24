@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Command agent-token gives coding agents their own GitHub identity: it
-// mints installation tokens for the go-steer-agent GitHub App, so agents
+// mints installation tokens for the go-steer-deckhand GitHub App, so agents
 // open pull requests as the App instead of as a human maintainer.
 //
 // Usage:
