@@ -206,9 +206,13 @@ repo creation goes through a workflow that waits for the maintainer:
    `dependabot.yml`, secret scanning and push protection, CodeQL default setup.
    It comments the result on the issue and closes it.
 
-**go-steer-shipyard permissions:** Administration, Contents and Workflows:
-read and write; Metadata: read. Installed on **All repositories**, so repos it
-creates are covered automatically. No webhook.
+**go-steer-shipyard permissions:** Administration and Contents: read and
+write; Metadata: read. No Workflows: shipyard never writes workflow files.
+Installed on **All repositories**, so repos it creates are covered
+automatically. No webhook. The workflow uses two tokens: an org-wide one with
+administration only, for the single "create repository" call, and one scoped
+to the new repo for everything after. Setup and request format:
+[go-steer/.github `shipyard/README.md`](https://github.com/go-steer/.github/blob/main/shipyard/README.md).
 
 **Its private key never goes to an agent.** The maintainer stores it as a
 secret on the approval environment in `go-steer/.github`, with deployment
