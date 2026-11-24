@@ -1,0 +1,37 @@
+# Paths that must not merge on surveyor's approval alone.
+#
+# How this protects itself:
+#   - GitHub reads CODEOWNERS from the PR's base branch, so a PR that edits
+#     this file is judged by the version already on main.
+#   - GitHub Apps cannot be code owners, so a bot approval (surveyor's or any
+#     other App's) can never satisfy an entry here.
+#   - These entries only take effect once the main-branch ruleset turns on
+#     "Require review from Code Owners" (see docs/DESIGN.md, "Merge policy").
+#
+# There is deliberately no catch-all `*` entry: anything not listed merges on
+# surveyor's approval alone.
+
+# This file and the automation around it.
+/.github/CODEOWNERS             @mastersingh24
+/.github/workflows/             @mastersingh24
+/.github/dependabot.yml         @mastersingh24
+
+# surveyor's own review config (surveyor dogfoods itself).
+/.github/surveyor.yaml          @mastersingh24
+
+# The code that decides approve vs. request-changes, and the code that
+# resolves config (locked org keys, base-branch reads, opt-out handling).
+/internal/verdict/              @mastersingh24
+/internal/config/               @mastersingh24
+
+# Instructions the reviewer always applies, including the prompt-injection
+# rules. Changes here change what "approved" means.
+/rubrics/core/                  @mastersingh24
+
+# Deployment, IAM / Workload Identity, and the GitHub App permission manifest.
+/deploy/                        @mastersingh24
+/app-manifest.yaml              @mastersingh24
+
+# CI gates for this repo.
+/dev/ci/                        @mastersingh24
+/dev/tools/.golangci.yml        @mastersingh24
