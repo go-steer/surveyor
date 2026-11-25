@@ -28,6 +28,7 @@ any GitHub org it is installed in.
 | 2026-11-24 | No org-level rulesets; repo rulesets, shipyard and a nightly drift check instead | Org rulesets need GitHub Team or Enterprise (go-steer is on Free). No agent holds repo admin, shipyard applies rulesets at creation, and the drift check flags any repo whose rulesets differ from the standard |
 | 2026-11-24 | Rebase merges only; agents squash their branch to one commit first | A squash merge makes the PR opener (go-steer-deckhand) the commit author, which breaks the no-agent-attribution rule; a rebase merge keeps the maintainer as author (surveyor#4) |
 | 2026-11-24 | GCP project `go-steer-drydock` hosts the surveyor service and the deckhand key | One project for go-steer automation, apart from the shared demo project |
+| 2026-11-25 | Coding agents act as the maintainer; deckhand is not used for PRs | The target flow is agents writing as the maintainer, surveyor approving, a merge queue merging. As PR author, the maintainer is also the squash author, so the attribution rule holds without the rebase workaround ([agent-identity.md](./agent-identity.md)) |
 | 2026-11-24 | Repo admins are the only ruleset bypass, in "pull requests only" mode; `v*` tags are admin-only | A solo maintainer can't approve their own PRs; bypass is tied to identity, so agents on the App can't use it |
 
 ## 2. Non-goals
@@ -242,7 +243,15 @@ There are three kinds of automation to consider.
    own PR, so agent PRs opened as `mastersingh24` that touch owned paths
    cannot get the code-owner approval at all.
 
-   **Decided:** coding agents get their own GitHub App, `go-steer-deckhand`, and
+   **Superseded 2026-11-25:** coding agents act as the maintainer (see the
+   decision log and [agent-identity.md](./agent-identity.md)). Proposed in
+   its place, not yet applied: drop "require code-owner review" (the
+   maintainer cannot approve their own PRs), have surveyor withhold
+   approval on code-owned paths, treat the maintainer's PR-only bypass as
+   the sign-off for those, and report every bypass merge nightly. The
+   original decision follows for the record.
+
+   **Decided 2026-11-24:** coding agents get their own GitHub App, `go-steer-deckhand`, and
    the maintainer's token is removed from agent environments. Agents keep
    authoring commits as the maintainer; the App only pushes branches and
    opens PRs. Agent PRs are approved by surveyor, or by the maintainer on
