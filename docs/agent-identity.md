@@ -1,6 +1,27 @@
 # Agent identities: go-steer-deckhand and go-steer-shipyard
 
-Status: decided 2026-11-24, not yet set up.
+> **Update 2026-11-25: agents act as the maintainer.** Coding agents open
+> PRs and push commits under the maintainer's own login; `go-steer-deckhand`
+> is not used for PRs. The deckhand App and `agent-token` stay available for
+> agents that run unattended on machines that should not hold the
+> maintainer's token. go-steer-shipyard is unchanged.
+>
+> Why: the flow the maintainer wants is agents writing code as the
+> maintainer, surveyor reviewing and approving, and a merge queue merging.
+> With the maintainer as PR author, squash merges credit the maintainer
+> again (no attribution problem). The trade-off is that a code-owner
+> approval can no longer come from a different identity. The proposed
+> replacement (not yet applied): surveyor withholds approval on code-owned
+> paths, the maintainer's ruleset bypass (pull requests only, visible on
+> the PR) is the sign-off for those, and a nightly report lists every
+> bypass merge. Agents holding the maintainer's token could use the bypass
+> too; the controls against that are soft (agent instructions, Claude
+> Code permission rules, the report). See DESIGN.md §6.4.
+>
+> The rest of this page describes the deckhand setup as built.
+
+Status: built 2026-11-24 (deckhand App ID 5904422); superseded for PR
+authoring on 2026-11-25.
 
 Two GitHub Apps, named for the crew theme:
 
