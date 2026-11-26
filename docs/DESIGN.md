@@ -1,6 +1,6 @@
 # surveyor design
 
-Status: draft, 2026-11-24. Nothing is built yet.
+Status: draft, 2026-11-24. The review engine (§4) runs as `surveyor review` since 2026-11-26; the service is not built yet.
 
 ## 1. Goal
 
@@ -128,6 +128,60 @@ Every posted finding is recorded with its outcome: fixed in a later commit,
 resolved without change, or dismissed with a reply. Dismissed findings
 become negative examples per repo, and the full record is the eval set for
 tuning prompts, routing and model choice.
+
+
+### As built: `surveyor review` (2026-11-26)
+
+The engine lives in `internal/review` on core-agent, with `internal/source`
+for the pull request and `cmd/surveyor` as the command.
+
+- **Sandbox.**
+  - **Tools:** the reviewer gets core-agent's read-only file tools only:
+    `read_file`, `read_many_files`, `view_file_outline`, `list_dir`, `stat`,
+    `glob` and `grep`.
+  - **Gate:** core-agent's permission gate runs in `allow` mode with the
+    checkout as the only root. In `allow` an out-of-scope read is denied
+    without a prompt; in `yolo` it would be allowed.
+  - **Evidence:** `TestReadOnlyToolsStayInRoot` drives the tools through a
+    real agent and tries absolute paths, `..`, a file symlink, a directory
+    symlink, `read_many_files`, `grep`, `glob`, `list_dir` and `stat` against
+    a file outside the checkout. All are denied. Under `yolo`, five of them
+    leak the file.
+  - **Relative paths** resolve against the checkout
+    (`permissions.WithWorkDir`).
+- **Dependency source.** Checking a change's use of a library needs the
+  library's real source.
+  - `go mod download` fills a surveyor-owned module cache
+    (`~/.cache/surveyor/gomod`), never the user's own. That cache is the one
+    extra root, read-only.
+  - Downloading runs no module code. A `go.mod` can only name an official Go
+    toolchain, which is checksum-verified like any module.
+  - In the service, the cache must not be shared between organizations with
+    private modules.
+- **Rules come from the base commit.** `AGENTS.md` (else `CLAUDE.md`) is
+  read with `git show <base>:<file>`, never from the checkout, so a pull
+  request cannot rewrite the rules it is reviewed against
+  (`TestCheckoutUsesBaseRules`).
+- **Untrusted text is delimited.** The PR title, description, diff and
+  rules sit in labelled blocks. Both prompts say the repository and the PR
+  are data, not instructions.
+- **Findings.**
+  - The finder records each finding through a `report_finding` tool: file,
+    line, severity, category, summary and failure scenario.
+  - Exact duplicates are dropped.
+  - Each finding goes to its own verifier, four at a time. A verifier gets
+    a fresh context with the claim, the file's diff and the same tools, and
+    records `confirmed`, `plausible` or `refuted` through `submit_verdict`.
+  - A verifier that never decides leaves the finding `plausible`, so it
+    isn't lost silently.
+  - Refuted findings are kept in the result for measurement.
+- **Usage.** Each model call is recorded through core-agent's `TurnTap` and
+  priced from the built-in catalog.
+- **First results.**
+  - On core-agent#1603 it correctly reported nothing, in 11s for $0.02.
+  - On core-agent#1614 it found a real bug the PR's own adversarial review
+    missed: `writeSubagentMarkdownFile` dropped a subagent's
+    `thinking_level`. The verifier confirmed it. It took 32s and cost $0.25.
 
 ## 5. Models and routing
 

@@ -8,9 +8,31 @@ verified findings inline, and approves the pull request when nothing blocking
 remains. Its approval is enough to merge, except on paths that
 [`CODEOWNERS`](./.github/CODEOWNERS) reserves for a human.
 
-> **Status: design.** Nothing is built yet. See
-> [`docs/DESIGN.md`](./docs/DESIGN.md) for the architecture, the merge and
-> security model, the configuration format, and the rollout plan.
+> **Status: the review engine runs as a command; the GitHub App service is
+> not built yet.** See [`docs/DESIGN.md`](./docs/DESIGN.md) for the
+> architecture, the merge and security model, the configuration format, and
+> the rollout plan.
+
+## Try it
+
+```sh
+go install github.com/go-steer/surveyor/cmd/surveyor@latest
+surveyor review --repo go-steer/core-agent --pr 1614
+```
+
+It checks out the pull request's head commit in a temporary directory,
+reads the repository's rules (`AGENTS.md`, else `CLAUDE.md`) from the base
+commit, and runs a finder pass and one verifier per finding with Claude on
+Vertex AI (default `claude-sonnet-5-5` at thinking level `high` in project
+`go-steer-drydock`; `--model`, `--level`, `--project`, `--region` change
+that). It prints the verified findings, or `--json`. Nothing is posted.
+
+The reviewer can read only the checkout and, read-only, a surveyor-owned Go
+module cache holding the change's dependencies (`--deps=false` skips it).
+It cannot write files, run commands or reach the network.
+
+Credentials: Google Application Default Credentials for Vertex AI, and a
+GitHub token from `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`.
 
 ## In brief
 
