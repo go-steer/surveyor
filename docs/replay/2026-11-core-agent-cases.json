@@ -1,0 +1,302 @@
+[
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1197,
+    "title": "feat(agent): stamp the auto-mode approver's context on every turn (#1175)",
+    "base_sha": "3a98600ae67c98847866355db6825133234498fc",
+    "head_sha": "6dbb8bff260f9dc9cbfa181a6db38bac23354a6b",
+    "additions": 1865,
+    "deletions": 53,
+    "merged_at": "2026-10-02T10:56:57Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1429,
+    "title": "fix(guardrails): bound out-of-band drain reads, re-queue errors, and add GuardrailStore",
+    "base_sha": "d8d8db172f458e5a67a103117060db3f149f9cde",
+    "head_sha": "bc595f963a0c8127f1a0ba4796346007fb729db0",
+    "additions": 886,
+    "deletions": 62,
+    "merged_at": "2026-10-31T23:44:10Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1430,
+    "title": "fix(usage,eventlog,compose): rebuild session-tree spend with per-model pricing and add SpendStore (#1359)",
+    "base_sha": "70c585f70ef8682fee8227e7b674fb771faaa23d",
+    "head_sha": "b2d49b43bf805e8153622bb653f8c19bd09e8f59",
+    "additions": 1186,
+    "deletions": 37,
+    "merged_at": "2026-10-31T23:59:43Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1431,
+    "title": "feat(background): ship A2A v0.3 RemoteAgentSpawner and subagents[].remote routing",
+    "base_sha": "a7ba63a0aa3e8f0bfa5391fd67d1a3d622ff050a",
+    "head_sha": "84d598aec6953421041a7427a9330093b72df7ad",
+    "additions": 2842,
+    "deletions": 18,
+    "merged_at": "2026-11-01T00:14:48Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1441,
+    "title": "fix(config): walk unknown nested keys recursively and fail on safety/cost typos",
+    "base_sha": "a162f8b601a2a872c12e9bb977bdc08c1173218a",
+    "head_sha": "6b6392aff30f0868e8f949aa5ab13fbc4509dfc7",
+    "additions": 385,
+    "deletions": 31,
+    "merged_at": "2026-11-01T11:01:42Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1445,
+    "title": "feat(approval): port durable write gate, effect outbox, and /parks endpoints (#1400)",
+    "base_sha": "4af6470b11e2464a2d2bf4759beecc9c3ae7b346",
+    "head_sha": "3860dad75ed3c50afdcadc552379cc79bd693697",
+    "additions": 13014,
+    "deletions": 47,
+    "merged_at": "2026-11-01T16:48:23Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1448,
+    "title": "feat(subagents): add mode, output_schema, tier, capability, mcp_tools, and Markdown authoring (#1401)",
+    "base_sha": "858d6223974332440c315013fa9a56284fed6b45",
+    "head_sha": "f4049264607aae95b9a490897d4f893c1ba569db",
+    "additions": 3750,
+    "deletions": 436,
+    "merged_at": "2026-11-01T17:08:31Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1451,
+    "title": "feat(agent,compose): add one-call RunOneShot / RunRecipe / RunWorkload facade (#1404)",
+    "base_sha": "4fff59ae07da36ae5bb246661d37d6a3ecad308a",
+    "head_sha": "d1d2b88b3affd7d5e9808f1f80f28c3d5ee14ae0",
+    "additions": 2719,
+    "deletions": 1,
+    "merged_at": "2026-11-01T18:01:50Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1454,
+    "title": "feat(config): add workload.yaml converter and import-workload CLI (#1402)",
+    "base_sha": "fe04c75ffcd39e372c213f29d23c9c299d2f579e",
+    "head_sha": "639c13b05aafd85fa4c629aa0a79757cb5bf6804",
+    "additions": 1871,
+    "deletions": 30,
+    "merged_at": "2026-11-01T17:28:00Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1463,
+    "title": "feat(compose,eventlog): port scheduled trigger, fleet lease, auto-resume, and pause rescan (#1405)",
+    "base_sha": "007b44aff158c0dff09340a9efc5f03ef5b8f3be",
+    "head_sha": "8499b178eaf666adb1feaf874486b97ed0c45574",
+    "additions": 4830,
+    "deletions": 264,
+    "merged_at": "2026-11-01T22:55:56Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1465,
+    "title": "feat(compose,attach): port deterministic monitoring cycle, notify, and /monitor-ack (#1406)",
+    "base_sha": "a805600e83d5f481468c028c3a684dd8dfffe347",
+    "head_sha": "628c8b40584ecb7edee9c62d847379cf96770e2b",
+    "additions": 4853,
+    "deletions": 8,
+    "merged_at": "2026-11-01T23:18:23Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1468,
+    "title": "feat(attach,compose,config): mount A2A v0.3 server on attach mux (#1407)",
+    "base_sha": "3750aa5893f93d20581e5d0a8f8428cd900374ac",
+    "head_sha": "23173b7ffdb661521e4a23dea9f57584876bf0f8",
+    "additions": 4826,
+    "deletions": 88,
+    "merged_at": "2026-11-02T00:12:11Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1512,
+    "title": "feat: add forge-neutral vcs_* tool suite and config.vcs (#1490)",
+    "base_sha": "c7ff3ebb05342f1c4c649df747260e0febf73de1",
+    "head_sha": "13cfc6487547554e615ebb75943845bd36889457",
+    "additions": 4071,
+    "deletions": 56,
+    "merged_at": "2026-11-06T14:39:24Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1557,
+    "title": "feat(models): bump core-models to v0.15.3 and classify Gemini 4 Carbon/Hydrogen",
+    "base_sha": "0cda1ec793ce709b3e2e0fed178696974149b470",
+    "head_sha": "b1d930dd8006f8112c93a392794e21c810ec8f50",
+    "additions": 153,
+    "deletions": 21,
+    "merged_at": "2026-11-16T14:55:53Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1570,
+    "title": "docs(models): point the ANTHROPIC_BASE_URL comment at the archived scenarios doc",
+    "base_sha": "182ef4b4f2cf0bb256f437857f0e098cf579c755",
+    "head_sha": "390eee313f18e4a3e34550a579bf9455138b93c1",
+    "additions": 5,
+    "deletions": 4,
+    "merged_at": "2026-11-17T00:11:43Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1572,
+    "title": "fix(vcs): defer VCSEventSink audit writes past in-flight turns (#1571)",
+    "base_sha": "b18ca8462db34d86a70ff9be56bb7b15e0156567",
+    "head_sha": "71752c47133d8c96fbdd3fc401a6a3ac01ff2efc",
+    "additions": 1254,
+    "deletions": 56,
+    "merged_at": "2026-11-17T13:53:19Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1576,
+    "title": "feat(webui): pin mast-web v0.7.0 and wire fetch-mast-web into release builds (#348)",
+    "base_sha": "dea96e8be8952dd9c0a643d98a1222f6649e843a",
+    "head_sha": "860d8ca81523733d3efc733a54449468df868031",
+    "additions": 46,
+    "deletions": 10,
+    "merged_at": "2026-11-17T22:12:03Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1577,
+    "title": "fix(examples): document secrets exclusion, disable web_search, and add sufficiency rules in GKE recipes (#695, #696)",
+    "base_sha": "e21aa8b613554426bff8b1132f03f200c350addb",
+    "head_sha": "499b91a648cbe64a62b2c95a09e268b858db3acf",
+    "additions": 124,
+    "deletions": 22,
+    "merged_at": "2026-11-17T22:31:03Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1578,
+    "title": "fix(transcript): record assistant reply in headless one-shot and report save errors (#1553)",
+    "base_sha": "588c6c0863685a42a97cec8c70987c5099300242",
+    "head_sha": "d2d48ad91f12a6fbd3b7f379547e2e2831e3219f",
+    "additions": 273,
+    "deletions": 25,
+    "merged_at": "2026-11-17T23:10:10Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1579,
+    "title": "fix(permissions): reject .. traversal and escaping symlinks on path-prefix rules (#1274)",
+    "base_sha": "5bc8910b94303d764c86ec38eb38da6c64f60287",
+    "head_sha": "75a5bfbb220af41f929167b3f1d8c33d0feb39f2",
+    "additions": 221,
+    "deletions": 7,
+    "merged_at": "2026-11-17T22:52:34Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1580,
+    "title": "fix(test): fix synchronous subagent alert race and CI test flakes (#1551)",
+    "base_sha": "588c6c0863685a42a97cec8c70987c5099300242",
+    "head_sha": "b6a6936a8ee2dcf8ed6ebb09f4116efa0e8a1a08",
+    "additions": 77,
+    "deletions": 9,
+    "merged_at": "2026-11-17T23:10:51Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1581,
+    "title": "feat(vcs,models): bump core-vcs to v1.2.0 and core-models to v0.15.4 (#1490)",
+    "base_sha": "5f78f69d6bf9f0f7c0d1a1978686214f26cdd39d",
+    "head_sha": "9f24183cb6acaae44d7f210b3cd3c7298f10fc19",
+    "additions": 57,
+    "deletions": 10,
+    "merged_at": "2026-11-18T01:12:52Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1592,
+    "title": "chore: remove three functions unreachable from any main or test",
+    "base_sha": "e30905562650cdab683e49a1ff2ab59e79dc1fe0",
+    "head_sha": "53979275f49a09a540f2cb0acb2a6ba67e55a951",
+    "additions": 3,
+    "deletions": 21,
+    "merged_at": "2026-11-21T17:18:28Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1603,
+    "title": "fix(modelretry): classify Claude errors by HTTPStatus, not the SDK type",
+    "base_sha": "37bc9f77ae3fe70f05e814216073b4a267911d7f",
+    "head_sha": "b70ad9fe3a2ef2d0b3f9f3791288e08974880b54",
+    "additions": 88,
+    "deletions": 33,
+    "merged_at": "2026-11-25T14:40:39Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1609,
+    "title": "fix(agent): gate Gemini parallelism quirk on enabled tools",
+    "base_sha": "673786cded6b5ce1bd41d6e8ce3073c3b1fd6367",
+    "head_sha": "4a9a1ecb5362ecafd7295d37ca786f181c34f866",
+    "additions": 1341,
+    "deletions": 46,
+    "merged_at": "2026-11-26T16:33:29Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1610,
+    "title": "fix(subagents): keep router descriptions out of child ADK identity prompts",
+    "base_sha": "8a8e9861d4da5ba91754955a62f6850d0c584ff1",
+    "head_sha": "2dfa2b84fea3255acb02e2d5439b807c626414f7",
+    "additions": 785,
+    "deletions": 32,
+    "merged_at": "2026-11-26T16:13:52Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1611,
+    "title": "fix(subagents): skip digest wrap when subagent lacks retrieve_raw",
+    "base_sha": "b85aa2ed9bce4b6e57f988598f3a05b833af6af4",
+    "head_sha": "680c23d254b5d03c0c25a2b2874d54bebea642c6",
+    "additions": 1364,
+    "deletions": 59,
+    "merged_at": "2026-11-26T15:57:57Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1612,
+    "title": "fix(mcp): omit MCP elicitation in headless and non-TUI runs (#1606)",
+    "base_sha": "26bcddbdd6dd24a7f0f0d603061687852d736bf6",
+    "head_sha": "ac7d8633129376d816d37cd723ff71870846e374",
+    "additions": 1012,
+    "deletions": 66,
+    "merged_at": "2026-11-26T15:28:01Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1614,
+    "title": "feat(config): model.thinking_level, one thinking setting across providers",
+    "base_sha": "449e923c9228cab6917fdbbf24ec8fae682ecf52",
+    "head_sha": "58a0bfc3cffb5d257899f35bc6e91d09bd389286",
+    "additions": 692,
+    "deletions": 39,
+    "merged_at": "2026-11-25T21:21:53Z"
+  },
+  {
+    "repo": "go-steer/core-agent",
+    "number": 1616,
+    "title": "fix(config): keep a subagent's thinking_level in the Markdown write",
+    "base_sha": "1b15d2371a382a64e2e0962c94a83f968633ce97",
+    "head_sha": "b5329565a08754490fd54314c13d5d5d31094fb8",
+    "additions": 55,
+    "deletions": 1,
+    "merged_at": "2026-11-26T23:32:20Z"
+  }
+]

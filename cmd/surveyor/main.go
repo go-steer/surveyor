@@ -38,13 +38,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/go-steer/core-agent/v3/pkg/config"
-	"github.com/go-steer/core-agent/v3/pkg/models"
-	_ "github.com/go-steer/core-agent/v3/pkg/models/anthropic" // registers anthropic-vertex
-	"github.com/go-steer/core-agent/v3/pkg/usage"
-
 	"github.com/go-steer/surveyor/internal/review"
 	"github.com/go-steer/surveyor/internal/source"
+	"github.com/go-steer/surveyor/internal/vertex"
 )
 
 func main() {
@@ -117,34 +113,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	cfg := config.DefaultConfig()
-	cfg.Model.Provider = config.ProviderAnthropicVertex
-	cfg.Model.Name = *model
-	cfg.Model.Anthropic = &config.AnthropicConfig{Vertex: &config.VertexConfig{Project: *project, Location: *region}}
-	provider, err := models.Resolve(cfg)
+	claude, err := vertex.Open(*project, *region)
 	if err != nil {
 		return fail(stderr, err)
 	}
-	finder, err := provider.Model(ctx, *model)
+	finder, err := claude.Model(ctx, *model)
 	if err != nil {
 		return fail(stderr, err)
 	}
 	verifier := finder
 	if *verifyModel != *model {
-		if verifier, err = provider.Model(ctx, *verifyModel); err != nil {
+		if verifier, err = claude.Model(ctx, *verifyModel); err != nil {
 			return fail(stderr, err)
 		}
-	}
-	catalog, err := usage.NewCatalogFromConfig(cfg, "", "")
-	if err != nil {
-		return fail(stderr, err)
 	}
 
 	_, _ = fmt.Fprintf(stderr, "surveyor: reviewing %s#%d (%s) with %s\n", *repo, *pr, short(p.HeadSHA), *model)
 	res, err := review.Review(ctx, review.Input{PR: p, Workdir: dir, Rules: rules, ReadOnlyRoots: readOnly}, review.Options{
 		Finder: finder, Verifier: verifier,
 		FinderLevel: *level, VerifierLevel: *verifyLevel,
-		Pricing: catalog, Backend: models.BackendOf(provider),
+		Pricing: claude.Pricing, Backend: claude.Backend,
 	})
 	if err != nil {
 		return fail(stderr, err)

@@ -56,6 +56,14 @@ GitHub token from `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`.
 - **One binary, two front ends.** `surveyor review --pr N` runs the same
   review locally before a pull request is opened.
 
+## How well it reviews
+
+[`docs/replay.md`](./docs/replay.md) replays surveyor and Claude Code's
+`/code-review` on merged pull requests, with a blind judge. On 30
+core-agent PRs, surveyor raised no false alarms, but it found 41% of the
+defects found by either reviewer to Claude Code's 93%, at less than half
+the cost.
+
 ## License
 
 Apache 2.0. See [`LICENSE`](./LICENSE).

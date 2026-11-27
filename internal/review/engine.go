@@ -104,7 +104,6 @@ func Review(ctx context.Context, in Input, opt Options) (*Result, error) {
 	opt = withDefaults(opt)
 	start := time.Now()
 	tracker := usage.NewTracker()
-	ctx = permissions.WithWorkDir(ctx, in.Workdir)
 
 	sink := &findingSink{}
 	summary, err := runFinder(ctx, in, opt, tracker, sink)
@@ -140,18 +139,45 @@ func withDefaults(opt Options) Options {
 	return opt
 }
 
-func newAgent(model adkmodel.LLM, instruction, level string, maxSteps int, extra tool.Tool, in Input, opt Options, tracker *usage.Tracker) (*agent.Agent, error) {
+// AgentSpec is one sandboxed agent: the finder, a verifier, or a
+// caller's own (such as dev/replay's judge).
+type AgentSpec struct {
+	Model       adkmodel.LLM
+	Instruction string
+	// Level is the thinking level; empty leaves the provider default.
+	Level    string
+	MaxSteps int
+	// Tools are added to the read-only tools; typically the one tool the
+	// agent reports its result through.
+	Tools []tool.Tool
+}
+
+// RunAgent runs one turn of a sandboxed agent that can read only
+// in.Workdir and in.ReadOnlyRoots, records each model call's usage on
+// tracker, and returns the agent's last text.
+func RunAgent(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, spec AgentSpec, prompt string) (string, error) {
+	if in.Workdir == "" {
+		return "", errors.New("review: Workdir is required")
+	}
+	a, err := newAgent(spec, in, opt, tracker)
+	if err != nil {
+		return "", err
+	}
+	return run(permissions.WithWorkDir(ctx, in.Workdir), a, prompt, tracker, opt)
+}
+
+func newAgent(spec AgentSpec, in Input, opt Options, tracker *usage.Tracker) (*agent.Agent, error) {
 	ro, err := ReadOnlyTools(in.Workdir, in.ReadOnlyRoots...)
 	if err != nil {
 		return nil, err
 	}
 	opts := []agent.Option{
-		agent.WithInstruction(instruction),
-		agent.WithTools(append(ro, extra)),
+		agent.WithInstruction(spec.Instruction),
+		agent.WithTools(append(ro, spec.Tools...)),
 		agent.WithMode(agent.ModeAutonomous),
-		agent.WithMaxSteps(maxSteps),
+		agent.WithMaxSteps(spec.MaxSteps),
 		agent.WithFinalReport(true),
-		agent.WithThinkingLevel(level),
+		agent.WithThinkingLevel(spec.Level),
 		agent.WithUsageTracker(tracker),
 		agent.WithoutSessionTitle(),
 	}
@@ -161,7 +187,7 @@ func newAgent(model adkmodel.LLM, instruction, level string, maxSteps int, extra
 	if opt.Backend != "" {
 		opts = append(opts, agent.WithBillingBackend(opt.Backend))
 	}
-	return agent.New(model, opts...)
+	return agent.New(spec.Model, opts...)
 }
 
 // run drives one agent turn, records each model call's usage on tracker,
@@ -202,11 +228,8 @@ func runFinder(ctx context.Context, in Input, opt Options, tracker *usage.Tracke
 	if err != nil {
 		return "", err
 	}
-	a, err := newAgent(opt.Finder, finderInstruction, opt.FinderLevel, opt.FinderMaxSteps, report, in, opt, tracker)
-	if err != nil {
-		return "", fmt.Errorf("review: finder: %w", err)
-	}
-	summary, err := run(ctx, a, finderPrompt(in, opt.MaxDiffBytes), tracker, opt)
+	spec := AgentSpec{Model: opt.Finder, Instruction: finderInstruction, Level: opt.FinderLevel, MaxSteps: opt.FinderMaxSteps, Tools: []tool.Tool{report}}
+	summary, err := RunAgent(ctx, in, opt, tracker, spec, finderPrompt(in, opt.MaxDiffBytes))
 	if err != nil {
 		return "", fmt.Errorf("review: finder: %w", err)
 	}
@@ -247,11 +270,8 @@ func verifyOne(ctx context.Context, in Input, opt Options, tracker *usage.Tracke
 	if err != nil {
 		return f, err
 	}
-	a, err := newAgent(opt.Verifier, verifierInstruction, opt.VerifierLevel, opt.VerifierMaxSteps, vt, in, opt, tracker)
-	if err != nil {
-		return f, fmt.Errorf("review: verifier: %w", err)
-	}
-	if _, err := run(ctx, a, verifierPrompt(in, f), tracker, opt); err != nil {
+	spec := AgentSpec{Model: opt.Verifier, Instruction: verifierInstruction, Level: opt.VerifierLevel, MaxSteps: opt.VerifierMaxSteps, Tools: []tool.Tool{vt}}
+	if _, err := RunAgent(ctx, in, opt, tracker, spec, verifierPrompt(in, f)); err != nil {
 		return f, fmt.Errorf("review: verifier for %s:%d: %w", f.File, f.Line, err)
 	}
 	f.Verdict, f.Reasoning = box.get()
