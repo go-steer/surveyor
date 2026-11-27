@@ -118,10 +118,15 @@ func cmdExtract(ctx context.Context, args []string, stderr io.Writer) error {
 		}
 		tracker := usage.NewTracker()
 		spec := review.AgentSpec{Model: m, Instruction: extractInstruction, Level: "low", MaxSteps: 60, Tools: []tool.Tool{tl}}
-		_, err = review.RunAgent(ctx, review.Input{Workdir: scratch}, opt, tracker, spec, "<review>\n"+r.Text+"\n</review>")
+		run, err := review.RunAgent(ctx, review.Input{Workdir: scratch}, opt, tracker, spec, "<review>\n"+r.Text+"\n</review>")
 		_ = os.RemoveAll(scratch)
 		if err != nil {
 			return fmt.Errorf("#%d: %w", c.Number, err)
+		}
+		if run.HitStepCap {
+			// It may have stopped before copying every finding: leave
+			// the case unextracted so judge refuses it and a rerun retries.
+			return fmt.Errorf("#%d: the extractor reached its step cap after %d findings", c.Number, len(found))
 		}
 		r.Findings, r.Extracted = found, true
 		if err := writeJSON(path, r); err != nil {

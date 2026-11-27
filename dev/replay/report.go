@@ -41,6 +41,9 @@ type tally struct {
 	cost, seconds, maxSeconds                float64
 	noReport                                 int
 	model                                    string
+	args                                     []string
+	// Coverage, for surveyor runs that recorded it.
+	withCoverage, incomplete, finderCalls int
 }
 
 func cmdReport(args []string, stdout, stderr io.Writer) error {
@@ -61,6 +64,7 @@ func cmdReport(args []string, stdout, stderr io.Writer) error {
 	var (
 		reviewers []string
 		tallies   = map[string]*tally{}
+		reviewed  = map[string]map[int]bool{} // reviewer -> PRs it ran on
 		defects   []*defect
 		judged    []Judged
 		judgeCost float64
@@ -89,10 +93,21 @@ func cmdReport(args []string, stdout, stderr io.Writer) error {
 				reviewers = append(reviewers, r.Reviewer)
 			}
 			t.cases++
+			if reviewed[r.Reviewer] == nil {
+				reviewed[r.Reviewer] = map[int]bool{}
+			}
+			reviewed[r.Reviewer][c.Number] = true
 			t.cost += r.CostUSD
 			t.seconds += r.Seconds
 			t.maxSeconds = max(t.maxSeconds, r.Seconds)
-			t.model = r.Model
+			t.model, t.args = r.Model, r.Args
+			if c := r.Coverage; c != nil {
+				t.withCoverage++
+				t.finderCalls += c.FinderCalls
+				if !c.Complete() {
+					t.incomplete++
+				}
+			}
 			if r.NoReportTool && len(r.Findings) == 0 && !noFindingsText(r.Text) {
 				t.noReport++
 			}
@@ -150,10 +165,23 @@ func cmdReport(args []string, stdout, stderr io.Writer) error {
 			defects = append(defects, groups[g])
 		}
 		for i, kb := range j.KnownBugs {
+			// Several groups can match one known bug (the judge grouped
+			// two reviewers' findings apart): credit every reviewer in any
+			// of them.
 			var match *defect
 			for _, g := range order {
-				if groups[g].known == i {
-					match = groups[g]
+				d := groups[g]
+				if d.known != i {
+					continue
+				}
+				if match == nil {
+					match = &defect{pr: d.pr, known: i, foundBy: map[string]bool{}, lostBy: map[string]bool{}}
+				}
+				for r := range d.foundBy {
+					match.foundBy[r] = true
+				}
+				for r := range d.lostBy {
+					match.lostBy[r] = true
 				}
 			}
 			knownAll = append(knownAll, struct {
@@ -174,12 +202,6 @@ func cmdReport(args []string, stdout, stderr io.Writer) error {
 	w("A **defect** is a group of findings the judge labelled real and about the same problem. ")
 	w("Known bugs are defects a later PR fixed. Judge cost: $%.2f.\n\n", judgeCost)
 
-	totalDefects := 0
-	for _, d := range defects {
-		if len(d.foundBy) > 0 {
-			totalDefects++
-		}
-	}
 	w("| | %s |\n|---|%s\n", strings.Join(reviewers, " | "), strings.Repeat("---|", len(reviewers)))
 	row := func(label string, f func(r string, t *tally) string) {
 		cells := make([]string, len(reviewers))
@@ -189,6 +211,12 @@ func cmdReport(args []string, stdout, stderr io.Writer) error {
 		w("| %s | %s |\n", label, strings.Join(cells, " | "))
 	}
 	row("model", func(_ string, t *tally) string { return t.model })
+	row("settings", func(_ string, t *tally) string {
+		if len(t.args) == 0 {
+			return "defaults"
+		}
+		return "`" + strings.Join(t.args, " ") + "`"
+	})
 	row("PRs reviewed", func(_ string, t *tally) string { return fmt.Sprint(t.cases) })
 	row("findings reported", func(_ string, t *tally) string { return fmt.Sprint(t.findings) })
 	row("real / nit / false alarm", func(_ string, t *tally) string {
@@ -200,14 +228,19 @@ func cmdReport(args []string, stdout, stderr io.Writer) error {
 	})
 	row("share of findings that are real", func(_ string, t *tally) string { return pct(t.real, t.findings) })
 	row("false alarms", func(_ string, t *tally) string { return pct(t.fp, t.findings) })
-	row(fmt.Sprintf("defects found (of %d found by anyone)", totalDefects), func(r string, _ *tally) string {
-		n := 0
+	// A reviewer that ran on only some PRs is measured against the defects
+	// and known bugs in those PRs.
+	row("defects found (of those found by anyone in the PRs it reviewed)", func(r string, _ *tally) string {
+		n, of := 0, 0
 		for _, d := range defects {
-			if d.foundBy[r] {
-				n++
+			if len(d.foundBy) > 0 && reviewed[r][d.pr] {
+				of++
+				if d.foundBy[r] {
+					n++
+				}
 			}
 		}
-		return fmt.Sprintf("%d (%s)", n, pct(n, totalDefects))
+		return fmt.Sprintf("%d of %d (%s)", n, of, pct(n, of))
 	})
 	row("defects only this reviewer found", func(r string, _ *tally) string {
 		n := 0
@@ -218,14 +251,18 @@ func cmdReport(args []string, stdout, stderr io.Writer) error {
 		}
 		return fmt.Sprint(n)
 	})
-	row(fmt.Sprintf("known bugs caught (of %d)", len(knownAll)), func(r string, _ *tally) string {
-		n := 0
+	row("known bugs caught", func(r string, _ *tally) string {
+		n, of := 0, 0
 		for _, k := range knownAll {
+			if !reviewed[r][k.pr] {
+				continue
+			}
+			of++
 			if k.d != nil && k.d.foundBy[r] {
 				n++
 			}
 		}
-		return fmt.Sprint(n)
+		return fmt.Sprintf("%d of %d", n, of)
 	})
 	row("cost, total (mean per PR)", func(_ string, t *tally) string {
 		return fmt.Sprintf("$%.2f ($%.2f)", t.cost, t.cost/float64(max(1, t.cases)))
@@ -233,9 +270,18 @@ func cmdReport(args []string, stdout, stderr io.Writer) error {
 	row("time, mean (max)", func(_ string, t *tally) string {
 		return fmt.Sprintf("%.0fs (%.0fs)", t.seconds/float64(max(1, t.cases)), t.maxSeconds)
 	})
-	if t := tallies["surveyor"]; t != nil {
-		w("\nsurveyor's verifier refuted %d findings: %d false alarms and %d nits correctly dropped, %d real findings lost.\n",
-			t.refutedReal+t.refutedNit+t.refutedFP, t.refutedFP, t.refutedNit, t.refutedReal)
+	row("incomplete reviews (cap hit or diff truncated)", func(_ string, t *tally) string {
+		if t.withCoverage == 0 {
+			return "not recorded"
+		}
+		return fmt.Sprintf("%d of %d (finder: %.0f calls mean)", t.incomplete, t.withCoverage, float64(t.finderCalls)/float64(t.withCoverage))
+	})
+	w("\n")
+	for _, r := range reviewers {
+		if t := tallies[r]; isSurveyor(r) {
+			w("%s's verifier refuted %d findings: %d false alarms and %d nits correctly dropped, %d real findings lost.\n",
+				r, t.refutedReal+t.refutedNit+t.refutedFP, t.refutedFP, t.refutedNit, t.refutedReal)
+		}
 	}
 	for _, r := range reviewers {
 		if n := tallies[r].noReport; n > 0 {

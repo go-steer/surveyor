@@ -33,6 +33,7 @@ import (
 
 	"github.com/go-steer/surveyor/internal/review"
 	"github.com/go-steer/surveyor/internal/source"
+	"github.com/go-steer/surveyor/internal/vertex"
 )
 
 type runConfig struct {
@@ -43,6 +44,17 @@ type runConfig struct {
 	ccModel      string
 	timeout      time.Duration
 	token        string
+
+	prAgentPython string
+	prAgentModel  string
+	prAgentEnv    []string
+	project       string
+	region        string
+	claude        *vertex.Claude // prices PR-Agent's tokens
+
+	crDeep    bool
+	crRetries int
+	crWait    time.Duration
 }
 
 func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
@@ -58,6 +70,14 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 	fs.StringVar(&rc.ccLevel, "cc-level", "high", "effort level for claude-code's /code-review")
 	fs.StringVar(&rc.ccModel, "cc-model", "", "model for claude-code (default: its configured model)")
 	fs.DurationVar(&rc.timeout, "timeout", 30*time.Minute, "per review")
+	fs.StringVar(&rc.prAgentPython, "pr-agent-python", "python3", "Python with pr_agent installed")
+	fs.StringVar(&rc.prAgentModel, "pr-agent-model", "vertex_ai/claude-sonnet-5-5", "LiteLLM model for pr-agent")
+	penv := fs.String("pr-agent-env", "", "extra KEY=VALUE settings for pr-agent, space-separated (e.g. PR_REVIEWER__NUM_MAX_FINDINGS=20)")
+	fs.StringVar(&rc.project, "project", "go-steer-drydock", "GCP project for pr-agent's Vertex AI calls and pricing")
+	fs.StringVar(&rc.region, "region", "global", "Vertex AI region for pr-agent")
+	fs.BoolVar(&rc.crDeep, "cr-deep", true, "run coderabbit with --deep (its full PR review policy)")
+	fs.IntVar(&rc.crRetries, "cr-retries", 8, "times to wait out a coderabbit rate limit")
+	fs.DurationVar(&rc.crWait, "cr-wait", 10*time.Minute, "wait before retrying a rate-limited coderabbit review (set --timeout to cover it)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -65,6 +85,14 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 		return errors.New("--dir is required")
 	}
 	rc.surveyorArgs = strings.Fields(*sargs)
+	rc.prAgentEnv = strings.Fields(*penv)
+	if strings.Contains(*reviewers, "pr-agent") {
+		cl, err := vertex.Open(rc.project, rc.region)
+		if err != nil {
+			return err
+		}
+		rc.claude = cl
+	}
 	rc.token = githubToken(ctx)
 	cases, err := loadCases(rc.dir)
 	if err != nil {
@@ -83,8 +111,8 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 	for _, c := range cases {
 		for _, r := range strings.Split(*reviewers, ",") {
 			r = strings.TrimSpace(r)
-			if r != "surveyor" && r != "claude-code" {
-				return fmt.Errorf("unknown reviewer %q", r)
+			if !isSurveyor(r) && !isPRAgent(r) && !isCodeRabbit(r) && r != "claude-code" {
+				return fmt.Errorf("unknown reviewer %q (want claude-code, surveyor[-<variant>], pr-agent[-<variant>] or coderabbit[-<variant>])", r)
 			}
 			if !exists(resultPath(rc.dir, c.Number, r)) {
 				jobs = append(jobs, job{c, r})
@@ -172,15 +200,28 @@ func (rc *runConfig) review(ctx context.Context, c Case, reviewer string) (*Run,
 	if err := os.MkdirAll(caseDir(rc.dir, c.Number), 0o755); err != nil {
 		return nil, err
 	}
-	if reviewer == "surveyor" {
-		return rc.runSurveyor(ctx, c)
+	if isSurveyor(reviewer) {
+		return rc.runSurveyor(ctx, c, reviewer)
+	}
+	if isPRAgent(reviewer) {
+		return rc.runPRAgent(ctx, c, reviewer)
+	}
+	if isCodeRabbit(reviewer) {
+		return rc.runCodeRabbit(ctx, c, reviewer)
 	}
 	return rc.runClaudeCode(ctx, c)
 }
 
-func (rc *runConfig) runSurveyor(ctx context.Context, c Case) (*Run, error) {
+// isSurveyor reports whether a reviewer name is surveyor or a variant of
+// it ("surveyor-opus"): each variant is a run with its own
+// --surveyor-args, stored under its own name.
+func isSurveyor(name string) bool {
+	return name == "surveyor" || strings.HasPrefix(name, "surveyor-")
+}
+
+func (rc *runConfig) runSurveyor(ctx context.Context, c Case, name string) (*Run, error) {
 	args := append([]string{"review", "--repo", c.Repo, "--pr", strconv.Itoa(c.Number), "--json"}, rc.surveyorArgs...)
-	logFile, err := os.Create(filepath.Join(caseDir(rc.dir, c.Number), "surveyor.log"))
+	logFile, err := os.Create(filepath.Join(caseDir(rc.dir, c.Number), name+".log"))
 	if err != nil {
 		return nil, err
 	}
@@ -190,15 +231,17 @@ func (rc *runConfig) runSurveyor(ctx context.Context, c Case) (*Run, error) {
 	cmd.Stdout, cmd.Stderr = &stdout, logFile
 	start := time.Now()
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("surveyor: %w (see surveyor.log)", err)
+		return nil, fmt.Errorf("surveyor: %w (see %s.log)", err, name)
 	}
 	var res review.Result
 	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
 		return nil, fmt.Errorf("surveyor output: %w", err)
 	}
 	return &Run{
-		Reviewer: "surveyor",
+		Reviewer: name,
 		Model:    surveyorModel(rc.surveyorArgs),
+		Args:     rc.surveyorArgs,
+		Coverage: &res.Coverage,
 		PR:       c.Number,
 		Findings: res.Findings,
 		Refuted:  res.Refuted,
@@ -209,16 +252,20 @@ func (rc *runConfig) runSurveyor(ctx context.Context, c Case) (*Run, error) {
 	}, nil
 }
 
+// surveyorModel finds --model in surveyor's arguments the way Go's flag
+// package does: one or two dashes, "=" or a separate value, last wins.
 func surveyorModel(args []string) string {
-	for i, a := range args {
-		if a == "--model" && i+1 < len(args) {
-			return args[i+1]
-		}
-		if v, ok := strings.CutPrefix(a, "--model="); ok {
-			return v
+	model := "claude-sonnet-5-5"
+	for i := 0; i < len(args); i++ {
+		a := strings.TrimPrefix(strings.TrimPrefix(args[i], "-"), "-")
+		if a == "model" && i+1 < len(args) {
+			model = args[i+1]
+			i++
+		} else if v, ok := strings.CutPrefix(a, "model="); ok {
+			model = v
 		}
 	}
-	return "claude-sonnet-5-5"
+	return model
 }
 
 // checkout makes (or reuses) D/pr-N/src, the repository at the case's
@@ -252,7 +299,11 @@ func (rc *runConfig) runClaudeCode(ctx context.Context, c Case) (*Run, error) {
 		return nil, fmt.Errorf("checkout: %w", err)
 	}
 	url := fmt.Sprintf("https://github.com/%s/pull/%d", c.Repo, c.Number)
+	// The checkout is the PR author's: read no project settings (hooks
+	// there run commands, which --disallowedTools does not stop) and no
+	// project MCP servers.
 	args := []string{"-p", fmt.Sprintf("/code-review %s %s", rc.ccLevel, url),
+		"--setting-sources", "user", "--strict-mcp-config",
 		"--output-format", "stream-json", "--verbose", "--disallowedTools", ccDisallowed}
 	if rc.ccModel != "" {
 		args = append(args, "--model", rc.ccModel)

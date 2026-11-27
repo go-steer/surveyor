@@ -24,6 +24,7 @@ import (
 
 	adkmodel "google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/genai"
 
 	"github.com/go-steer/core-agent/v3/pkg/agent"
 	"github.com/go-steer/core-agent/v3/pkg/permissions"
@@ -66,6 +67,9 @@ type Options struct {
 	// FinderLevel and VerifierLevel are thinking levels (minimal..max);
 	// empty leaves the provider default.
 	FinderLevel, VerifierLevel string
+	// FinderStyle is FinderStrict (the default) or FinderBroad; see
+	// prompts.go.
+	FinderStyle string
 	// FinderMaxSteps and VerifierMaxSteps cap model calls per agent.
 	// Defaults 60 and 25.
 	FinderMaxSteps, VerifierMaxSteps int
@@ -87,9 +91,33 @@ type Result struct {
 	// Refuted are findings verification rejected, kept for measurement.
 	Refuted []Finding `json:"refuted"`
 	// Summary is the finder's closing description of the change.
-	Summary  string        `json:"summary"`
+	Summary string `json:"summary"`
+	// Coverage says whether the review saw the whole change.
+	Coverage Coverage      `json:"coverage"`
 	Usage    usage.Totals  `json:"usage"`
 	Duration time.Duration `json:"duration"`
+}
+
+// Coverage records how much of the change the review could have read. A
+// review that hit a cap may have missed defects, so "no findings" from it
+// is not evidence the change is clean.
+type Coverage struct {
+	// DiffBytes is the size of the diff; DiffTruncated is set when it was
+	// over MaxDiffBytes, so the finder got only the file list.
+	DiffBytes     int  `json:"diff_bytes"`
+	DiffTruncated bool `json:"diff_truncated"`
+	// FinderCalls is the finder's model calls; FinderHitCap is set when it
+	// reached FinderMaxSteps and had to stop.
+	FinderCalls    int  `json:"finder_calls"`
+	FinderMaxSteps int  `json:"finder_max_steps"`
+	FinderHitCap   bool `json:"finder_hit_cap"`
+	// VerifiersHitCap counts verifiers that reached VerifierMaxSteps.
+	VerifiersHitCap int `json:"verifiers_hit_cap"`
+}
+
+// Complete reports whether nothing was cut short.
+func (c Coverage) Complete() bool {
+	return !c.DiffTruncated && !c.FinderHitCap && c.VerifiersHitCap == 0
 }
 
 // Review runs the finder over the change, then verifies each finding
@@ -106,18 +134,26 @@ func Review(ctx context.Context, in Input, opt Options) (*Result, error) {
 	tracker := usage.NewTracker()
 
 	sink := &findingSink{}
-	summary, err := runFinder(ctx, in, opt, tracker, sink)
+	finder, err := runFinder(ctx, in, opt, tracker, sink)
 	if err != nil {
 		return nil, err
 	}
-	verified, refuted, err := verifyAll(ctx, in, opt, tracker, sink.all())
+	verified, refuted, capped, err := verifyAll(ctx, in, opt, tracker, sink.all())
 	if err != nil {
 		return nil, err
 	}
 	return &Result{
 		Findings: verified,
 		Refuted:  refuted,
-		Summary:  summary,
+		Summary:  finder.Text,
+		Coverage: Coverage{
+			DiffBytes:       len(in.PR.Diff),
+			DiffTruncated:   len(in.PR.Diff) > opt.MaxDiffBytes,
+			FinderCalls:     finder.ModelCalls,
+			FinderMaxSteps:  opt.FinderMaxSteps,
+			FinderHitCap:    finder.HitStepCap,
+			VerifiersHitCap: capped,
+		},
 		Usage:    tracker.Totals(),
 		Duration: time.Since(start),
 	}, nil
@@ -152,18 +188,33 @@ type AgentSpec struct {
 	Tools []tool.Tool
 }
 
+// AgentRun is one finished agent turn.
+type AgentRun struct {
+	// Text is the agent's last text.
+	Text string
+	// ModelCalls counts the turn's model calls. HitStepCap is set when
+	// the agent reached MaxSteps: its tools were taken away and it had
+	// to report with what it had.
+	ModelCalls int
+	HitStepCap bool
+}
+
 // RunAgent runs one turn of a sandboxed agent that can read only
-// in.Workdir and in.ReadOnlyRoots, records each model call's usage on
-// tracker, and returns the agent's last text.
-func RunAgent(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, spec AgentSpec, prompt string) (string, error) {
+// in.Workdir and in.ReadOnlyRoots and records each model call's usage on
+// tracker.
+func RunAgent(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, spec AgentSpec, prompt string) (AgentRun, error) {
 	if in.Workdir == "" {
-		return "", errors.New("review: Workdir is required")
+		return AgentRun{}, errors.New("review: Workdir is required")
 	}
 	a, err := newAgent(spec, in, opt, tracker)
 	if err != nil {
-		return "", err
+		return AgentRun{}, err
 	}
-	return run(permissions.WithWorkDir(ctx, in.Workdir), a, prompt, tracker, opt)
+	r, err := run(permissions.WithWorkDir(ctx, in.Workdir), a, prompt, tracker, opt)
+	// core-agent's step gate allows MaxSteps calls, then one tool-less
+	// final-report call: more calls than MaxSteps means the cap was hit.
+	r.HitStepCap = spec.MaxSteps > 0 && r.ModelCalls > spec.MaxSteps
+	return r, err
 }
 
 func newAgent(spec AgentSpec, in Input, opt Options, tracker *usage.Tracker) (*agent.Agent, error) {
@@ -190,18 +241,18 @@ func newAgent(spec AgentSpec, in Input, opt Options, tracker *usage.Tracker) (*a
 	return agent.New(spec.Model, opts...)
 }
 
-// run drives one agent turn, records each model call's usage on tracker,
-// and returns the agent's last text. core-agent leaves usage recording to
-// whoever drives Run (its facade does the same).
-func run(ctx context.Context, a *agent.Agent, prompt string, tracker *usage.Tracker, opt Options) (string, error) {
+// run drives one agent turn and records each model call's usage on
+// tracker. core-agent leaves usage recording to whoever drives Run (its
+// facade does the same).
+func run(ctx context.Context, a *agent.Agent, prompt string, tracker *usage.Tracker, opt Options) (AgentRun, error) {
 	var (
-		last string
+		r    AgentRun
 		tap  usage.TurnTap
 		rate = usage.PriceOnCatalog(opt.Pricing, opt.Backend, a.ModelName())
 	)
 	for ev, err := range a.Run(ctx, prompt) {
 		if err != nil {
-			return last, err
+			return r, err
 		}
 		tap.Observe(ev)
 		if u, ok := tap.Commit(ev); ok {
@@ -210,6 +261,11 @@ func run(ctx context.Context, a *agent.Agent, prompt string, tracker *usage.Trac
 		if ev == nil || ev.Content == nil || ev.Partial {
 			continue
 		}
+		// One complete model-role event per model call (tool results come
+		// back as user-role events).
+		if ev.Content.Role == genai.RoleModel {
+			r.ModelCalls++
+		}
 		var b strings.Builder
 		for _, p := range ev.Content.Parts {
 			if p.Text != "" && !p.Thought {
@@ -217,27 +273,32 @@ func run(ctx context.Context, a *agent.Agent, prompt string, tracker *usage.Trac
 			}
 		}
 		if t := strings.TrimSpace(b.String()); t != "" {
-			last = t
+			r.Text = t
 		}
 	}
-	return last, nil
+	return r, nil
 }
 
-func runFinder(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, sink *findingSink) (string, error) {
+func runFinder(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, sink *findingSink) (AgentRun, error) {
 	report, err := newReportTool(sink)
 	if err != nil {
-		return "", err
+		return AgentRun{}, err
 	}
-	spec := AgentSpec{Model: opt.Finder, Instruction: finderInstruction, Level: opt.FinderLevel, MaxSteps: opt.FinderMaxSteps, Tools: []tool.Tool{report}}
-	summary, err := RunAgent(ctx, in, opt, tracker, spec, finderPrompt(in, opt.MaxDiffBytes))
+	instruction, err := finderInstruction(opt.FinderStyle)
 	if err != nil {
-		return "", fmt.Errorf("review: finder: %w", err)
+		return AgentRun{}, err
 	}
-	return summary, nil
+	spec := AgentSpec{Model: opt.Finder, Instruction: instruction, Level: opt.FinderLevel, MaxSteps: opt.FinderMaxSteps, Tools: []tool.Tool{report}}
+	r, err := RunAgent(ctx, in, opt, tracker, spec, finderPrompt(in, opt.MaxDiffBytes))
+	if err != nil {
+		return r, fmt.Errorf("review: finder: %w", err)
+	}
+	return r, nil
 }
 
-func verifyAll(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, findings []Finding) (verified, refuted []Finding, err error) {
+func verifyAll(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, findings []Finding) (verified, refuted []Finding, capped int, err error) {
 	out := make([]Finding, len(findings))
+	hit := make([]bool, len(findings))
 	errs := make([]error, len(findings))
 	sem := make(chan struct{}, opt.VerifyConcurrency)
 	var wg sync.WaitGroup
@@ -247,32 +308,36 @@ func verifyAll(ctx context.Context, in Input, opt Options, tracker *usage.Tracke
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out[i], errs[i] = verifyOne(ctx, in, opt, tracker, f)
+			out[i], hit[i], errs[i] = verifyOne(ctx, in, opt, tracker, f)
 		}()
 	}
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
-	for _, f := range out {
+	for i, f := range out {
+		if hit[i] {
+			capped++
+		}
 		if f.Verdict == VerdictRefuted {
 			refuted = append(refuted, f)
 		} else {
 			verified = append(verified, f)
 		}
 	}
-	return verified, refuted, nil
+	return verified, refuted, capped, nil
 }
 
-func verifyOne(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, f Finding) (Finding, error) {
+func verifyOne(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, f Finding) (Finding, bool, error) {
 	box := &verdictBox{}
 	vt, err := newVerdictTool(box)
 	if err != nil {
-		return f, err
+		return f, false, err
 	}
 	spec := AgentSpec{Model: opt.Verifier, Instruction: verifierInstruction, Level: opt.VerifierLevel, MaxSteps: opt.VerifierMaxSteps, Tools: []tool.Tool{vt}}
-	if _, err := RunAgent(ctx, in, opt, tracker, spec, verifierPrompt(in, f)); err != nil {
-		return f, fmt.Errorf("review: verifier for %s:%d: %w", f.File, f.Line, err)
+	r, err := RunAgent(ctx, in, opt, tracker, spec, verifierPrompt(in, f))
+	if err != nil {
+		return f, false, fmt.Errorf("review: verifier for %s:%d: %w", f.File, f.Line, err)
 	}
 	f.Verdict, f.Reasoning = box.get()
 	if f.Verdict == "" {
@@ -280,5 +345,5 @@ func verifyOne(ctx context.Context, in Input, opt Options, tracker *usage.Tracke
 		// finding is kept as plausible so it is not lost silently.
 		f.Verdict, f.Reasoning = VerdictPlausible, "The verifier did not reach a verdict."
 	}
-	return f, nil
+	return f, r.HitStepCap, nil
 }

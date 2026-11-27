@@ -63,6 +63,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	verifyModel := fs.String("verify-model", "", "verifier model (default: --model)")
 	level := fs.String("level", "high", "finder thinking level (minimal..max)")
 	verifyLevel := fs.String("verify-level", "medium", "verifier thinking level")
+	finderStyle := fs.String("finder-style", review.FinderStrict, "finder prompt: strict (report only traced failures) or broad (report every suspected defect; the verifiers filter)")
+	finderSteps := fs.Int("finder-steps", 60, "finder model-call cap")
+	verifySteps := fs.Int("verify-steps", 25, "verifier model-call cap")
 	project := fs.String("project", envOr("ANTHROPIC_VERTEX_PROJECT_ID", "go-steer-drydock"), "GCP project for Claude on Vertex AI")
 	region := fs.String("region", envOr("CLOUD_ML_REGION", "global"), "Vertex AI region")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
@@ -132,6 +135,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	res, err := review.Review(ctx, review.Input{PR: p, Workdir: dir, Rules: rules, ReadOnlyRoots: readOnly}, review.Options{
 		Finder: finder, Verifier: verifier,
 		FinderLevel: *level, VerifierLevel: *verifyLevel,
+		FinderStyle: *finderStyle, FinderMaxSteps: *finderSteps, VerifierMaxSteps: *verifySteps,
 		Pricing: claude.Pricing, Backend: claude.Backend,
 	})
 	if err != nil {
@@ -165,6 +169,19 @@ func printMarkdown(w io.Writer, p review.PullRequest, res *review.Result) {
 	cost := fmt.Sprintf("$%.2f", u.CostUSD)
 	if u.UnpricedTurns > 0 {
 		cost += "+ (some turns unpriced)"
+	}
+	if c := res.Coverage; !c.Complete() {
+		_, _ = fmt.Fprintln(w, "**Incomplete review:** findings may be missing.")
+		if c.DiffTruncated {
+			_, _ = fmt.Fprintf(w, "- The diff (%d bytes) was over the prompt cap; the finder got the file list.\n", c.DiffBytes)
+		}
+		if c.FinderHitCap {
+			_, _ = fmt.Fprintf(w, "- The finder reached its %d-call cap.\n", c.FinderMaxSteps)
+		}
+		if c.VerifiersHitCap > 0 {
+			_, _ = fmt.Fprintf(w, "- %d verifiers reached their call cap.\n", c.VerifiersHitCap)
+		}
+		_, _ = fmt.Fprintln(w)
 	}
 	_, _ = fmt.Fprintf(w, "---\n%d findings kept, %d refuted. %d model calls, %d input (%d cached) and %d output tokens, %s, %s.\n",
 		len(res.Findings), len(res.Refuted), u.Turns, u.InputTokens, u.CachedInputTokens, u.OutputTokens, cost, res.Duration.Round(1e9))

@@ -17,6 +17,7 @@
 //
 //	replay select --dir D --repo go-steer/core-agent --since 2026-10-27 --limit 30 [--include 1614,1543]
 //	replay run    --dir D [--reviewers surveyor,claude-code] [--parallel 3]
+//	replay run    --dir D --reviewers surveyor-opus --surveyor-args "--model claude-opus-5-5"
 //	replay extract --dir D
 //	replay judge  --dir D
 //	replay report --dir D > D/report.md
@@ -32,7 +33,8 @@
 // defects a later PR fixed. report prints the comparison.
 //
 // The reviewers: "surveyor" runs the surveyor binary (--surveyor) with
-// --json; "claude-code" runs `claude -p "/code-review <level> <PR URL>"`
+// --json, and "surveyor-<variant>" does the same with that run's
+// --surveyor-args, stored under its own name; "claude-code" runs `claude -p "/code-review <level> <PR URL>"`
 // in a checkout of the PR's head, with edits and PR comments disallowed,
 // and reads the findings from its ReportFindings tool call, or, when it
 // writes them as text instead, from extract.

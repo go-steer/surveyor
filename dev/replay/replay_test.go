@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,15 +130,110 @@ func TestReport(t *testing.T) {
 		"| | claude-code | surveyor |",
 		"| findings reported | 3 | 2 |",
 		"| real / nit / false alarm | 2 / 1 / 0 | 1 / 0 / 1 |",
-		"| defects found (of 2 found by anyone) | 2 (100%) | 1 (50%) |",
+		"| defects found (of those found by anyone in the PRs it reviewed) | 2 of 2 (100%) | 1 of 2 (50%) |",
 		"| defects only this reviewer found | 1 | 0 |",
-		"| known bugs caught (of 1) | 1 | 1 |",
-		"0 false alarms and 0 nits correctly dropped, 1 real findings lost",
+		"| known bugs caught | 1 of 1 | 1 of 1 |",
+		"surveyor's verifier refuted 1 findings: 0 false alarms and 0 nits correctly dropped, 1 real findings lost",
 		"| #7 | `a.go:1` | bug C | yes | refuted |",
 		"#7 `a.go:1` wrong B",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q\n%s", want, got)
+		}
+	}
+}
+
+func TestPRAgentFindings(t *testing.T) {
+	var out prAgentOutput
+	if err := json.Unmarshal([]byte(`{"review":{"key_issues_to_review":[
+		{"relevant_file":"a.go","issue_header":"Possible Bug","issue_content":"nil map write","start_line":12,"end_line":14}],
+		"security_concerns":"No\n"},"usage":{"prompt_tokens":10,"completion_tokens":2}}`), &out); err != nil {
+		t.Fatal(err)
+	}
+	fs := out.findings()
+	if len(fs) != 1 || fs[0].File != "a.go" || fs[0].Line != 12 || fs[0].Category != "possible-bug" ||
+		fs[0].Summary != "Possible Bug: nil map write" || fs[0].Severity != review.SeverityImportant {
+		t.Errorf("findings = %+v", fs)
+	}
+	out.Review.Security = "Sensitive information exposure: the token is logged."
+	if fs := out.findings(); len(fs) != 2 || fs[1].Category != "security" {
+		t.Errorf("a security concern should become a finding: %+v", fs)
+	}
+}
+
+func TestParseCodeRabbit(t *testing.T) {
+	out := strings.Join([]string{
+		`{"type":"review_context","baseCommit":"abc"}`,
+		`{"type":"heartbeat","status":"reviewing"}`,
+		`{"type":"finding","severity":"major","fileName":"a.go","startLine":5,"title":"Nil map","comment":"writes to a nil map"}`,
+		`{"type":"finding","severity":"minor","fileName":"b.go","startLine":9,"title":"Typo","comment":"wording"}`,
+		`{"type":"complete","status":"review_completed","findings":2,"reviewedFiles":["a.go","b.go"]}`,
+	}, "\n")
+	r, err := parseCodeRabbit([]byte(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 2 || r.Findings[0].Severity != review.SeverityImportant || r.Findings[1].Severity != review.SeverityNit ||
+		r.Findings[0].File != "a.go" || r.Findings[0].Line != 5 {
+		t.Errorf("findings = %+v", r.Findings)
+	}
+	cov, text := crCoverage([]string{"a.go", "b.go", "c.go", "go.sum"}, r.Text)
+	if !cov.DiffTruncated || text != "2 files reviewed; not reviewed: c.go" {
+		t.Errorf("coverage = %+v, %q; want c.go missing and go.sum ignored", cov, text)
+	}
+	if _, err := parseCodeRabbit([]byte(`{"type":"complete","status":"action_required","message":"rate limited"}`)); err == nil ||
+		!strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("an incomplete review should fail with its message: %v", err)
+	}
+	if _, err := parseCodeRabbit([]byte(`{"type":"heartbeat"}`)); err == nil {
+		t.Error("output with no complete event should fail")
+	}
+}
+
+func TestSurveyorModel(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{nil, "claude-sonnet-5-5"},
+		{[]string{"--project", "p", "--model", "claude-opus-5-5"}, "claude-opus-5-5"},
+		{[]string{"-model", "a", "--model=b"}, "b"},
+		{[]string{"-model=c"}, "c"},
+		{[]string{"--verify-model", "x"}, "claude-sonnet-5-5"},
+	} {
+		if got := surveyorModel(tc.args); got != tc.want {
+			t.Errorf("surveyorModel(%q) = %q, want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+// TestReportKnownBugAcrossGroups: when the judge puts two reviewers'
+// findings about one known bug in separate groups, both get the credit.
+func TestReportKnownBugAcrossGroups(t *testing.T) {
+	dir := t.TempDir()
+	f := review.Finding{File: "a.go", Line: 1, Summary: "bug"}
+	for _, err := range []error{
+		writeJSON(filepath.Join(dir, "cases.json"), []Case{{Repo: "o/r", Number: 3}}),
+		writeJSON(resultPath(dir, 3, "surveyor"), Run{Reviewer: "surveyor", Findings: []review.Finding{f}}),
+		writeJSON(resultPath(dir, 3, "claude-code"), Run{Reviewer: "claude-code", Findings: []review.Finding{f}}),
+		writeJSON(filepath.Join(caseDir(dir, 3), "judge.json"), Judged{PR: 3, Reviewers: []string{"surveyor", "claude-code"},
+			KnownBugs: []KnownBug{{IntroducingPR: 3, FixPR: 4, Description: "bug"}},
+			Judgements: []Judgement{
+				{ID: "F1", Reviewer: "surveyor", Finding: f, Label: "real", Group: "F1", KnownBug: 0},
+				{ID: "F2", Reviewer: "claude-code", Finding: f, Label: "real", Group: "F2", KnownBug: 0},
+			}}),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errOut bytes.Buffer
+	if err := cmdReport([]string{"--dir", dir}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"| known bugs caught | 1 of 1 | 1 of 1 |", "| #3 | #4 | bug | caught | caught |"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("report lacks %q\n%s", want, out.String())
 		}
 	}
 }

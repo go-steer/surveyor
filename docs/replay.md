@@ -64,7 +64,7 @@ plus the 16 most recent PRs that change code. The full report is in
 | findings marked important that are real | 66 of 107 (62%) | 29 of 30 (97%) |
 | defects found (of 75 found by either) | 70 (93%) | 31 (41%) |
 | defects only this reviewer found | 44 | 5 |
-| known bugs caught (of 25) | 14 | 9 |
+| known bugs caught (of 25) | 14 | 10 |
 | cost per PR, mean | $1.22 | $0.55 |
 | time per PR, mean (max) | 219s (482s) | 92s (385s) |
 
@@ -76,7 +76,7 @@ Judging cost $32.56 in total ($1.09 per PR).
   - Nearly everything it reports is real, and it raised no false alarm in
     30 PRs.
   - It reports about 1.6 findings per PR and misses more than half of
-    what Claude Code finds, including 6 known bugs Claude Code caught.
+    what Claude Code finds, including 5 known bugs Claude Code caught.
   - It caught 1 known bug Claude Code missed: #1465, where `Append`'s 404
     was never mapped to a fallback.
 - **The verifier did nothing.** It refuted 0 of 47 findings: the finder
@@ -134,8 +134,16 @@ Judging cost $32.56 in total ($1.09 per PR).
 
 ### Next experiments
 
-Each is one `run` into the same directory with a different
-`--surveyor-args`, then `judge --redo`:
+Each experiment is a surveyor variant: a reviewer named `surveyor-<name>`
+with its own `--surveyor-args`, so its results sit beside the others
+instead of being skipped as finished. Run it in a copy of the replay
+directory, then judge every reviewer together:
+
+```sh
+bin/replay run   --dir $D --reviewers surveyor-opus --surveyor-args "--model claude-opus-5-5 --verify-model claude-sonnet-5-5"
+bin/replay judge --dir $D --reviewers surveyor,claude-code,surveyor-opus
+```
+
 1. Finder on Opus 5.5 at `high`.
 2. A finder prompt that asks for breadth: report every suspected defect
    and let the verifier filter.

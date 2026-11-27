@@ -5,16 +5,18 @@ Every finding was judged blind (reviewer hidden, order shuffled) by claude-opus-
 | | claude-code | surveyor |
 |---|---|---|
 | model | claude-opus-5-5 | claude-sonnet-5-5 |
+| settings | defaults | defaults |
 | PRs reviewed | 30 | 30 |
 | findings reported | 212 | 47 |
 | real / nit / false alarm | 73 / 129 / 10 | 31 / 16 / 0 |
 | share of findings that are real | 34% | 66% |
 | false alarms | 5% | 0% |
-| defects found (of 75 found by anyone) | 70 (93%) | 31 (41%) |
+| defects found (of those found by anyone in the PRs it reviewed) | 70 of 75 (93%) | 31 of 75 (41%) |
 | defects only this reviewer found | 44 | 5 |
-| known bugs caught (of 25) | 14 | 9 |
+| known bugs caught | 14 of 25 | 10 of 25 |
 | cost, total (mean per PR) | $36.63 ($1.22) | $16.48 ($0.55) |
 | time, mean (max) | 219s (482s) | 92s (385s) |
+| incomplete reviews (cap hit or diff truncated) | not recorded | not recorded |
 
 surveyor's verifier refuted 0 findings: 0 false alarms and 0 nits correctly dropped, 0 real findings lost.
 
@@ -34,7 +36,7 @@ surveyor's verifier refuted 0 findings: 0 false alarms and 0 nits correctly drop
 | #1445 | #1477 | On an operator verdict of "edit", beforeTool persists the decision and then calls applyArgs(args, edited), which writes the edited keys into the caller's arg... | missed | missed |
 | #1448 | #1460 | The new capability: read_only check calls tools.IsReadOnlyTool on built-in tools after cmd/core-agent has wrapped them with the MCP digester. digestingTool.R... | missed | missed |
 | #1448 | #1460 | Markdown subagent authoring (.agents/subagents/*.md) and the baseDir stamping used for output_schema resolution are wired only into config.Load. The -c/--con... | missed | missed |
-| #1451 | #1476 | RunOneShot/compose.Run select a subagent's MCP toolsets with `ts.Name() == name \|\| strings.HasPrefix(ts.Name(), name+"_")`, ignore spec.MCPTools entirely (... | caught | missed |
+| #1451 | #1476 | RunOneShot/compose.Run select a subagent's MCP toolsets with `ts.Name() == name \|\| strings.HasPrefix(ts.Name(), name+"_")`, ignore spec.MCPTools entirely (... | caught | caught |
 | #1454 | #1470 | When converting tool_catalog entries into permissions.allow rules, any non-mutating tool whose name contains a hyphen is classified as a subagent and emitted... | caught | missed |
 | #1454 | #1501 | The workload importer maps mast's per-turn/per-session call budgets (budget.max_turns, budget.max_model_calls_per_turn) onto cfg.Agent.MaxSteps, but nothing ... | caught | caught |
 | #1463 | #1474 | persist writes the new fire count to in-memory t.fires before SaveSchedule succeeds, yet recomputes the count from the stored prev.Fires on the next call. Wh... | missed | missed |

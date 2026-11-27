@@ -52,14 +52,19 @@ type KnownBug struct {
 type Run struct {
 	Reviewer string `json:"reviewer"`
 	Model    string `json:"model"`
-	PR       int    `json:"pr"`
+	// Args are the extra `surveyor review` arguments for a surveyor
+	// variant.
+	Args []string `json:"args,omitempty"`
+	PR   int      `json:"pr"`
 	// Findings are what the reviewer reported.
 	Findings []review.Finding `json:"findings"`
 	// Refuted are findings the reviewer itself dropped (surveyor's
 	// verifier), kept to measure what verification costs.
 	Refuted []review.Finding `json:"refuted,omitempty"`
-	CostUSD float64          `json:"cost_usd"`
-	Seconds float64          `json:"seconds"`
+	// Coverage is surveyor's record of whether it read the whole change.
+	Coverage *review.Coverage `json:"coverage,omitempty"`
+	CostUSD  float64          `json:"cost_usd"`
+	Seconds  float64          `json:"seconds"`
 	// Text is the reviewer's closing message.
 	Text string `json:"text,omitempty"`
 	// NoReportTool is set when claude-code never called ReportFindings,

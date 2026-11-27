@@ -74,6 +74,7 @@ func cmdJudge(ctx context.Context, args []string, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", "", "replay directory")
 	reviewers := fs.String("reviewers", "surveyor,claude-code", "reviewers whose results must exist before a case is judged")
+	optional := fs.String("optional", "", "reviewers judged where they have a result (e.g. one that ran on only some cases)")
 	model := fs.String("model", "claude-opus-5-5", "judge model")
 	level := fs.String("level", "xhigh", "judge thinking level")
 	project := fs.String("project", "go-steer-drydock", "GCP project for Claude on Vertex AI")
@@ -131,6 +132,10 @@ func cmdJudge(ctx context.Context, args []string, stderr io.Writer) error {
 		if len(missing) > 0 {
 			logf("skip  #%d: no result yet from %s", c.Number, strings.Join(missing, ", "))
 			continue
+		}
+		if *optional != "" {
+			extra, _ := loadRuns(*dir, c.Number, strings.Split(*optional, ","))
+			runs = append(runs, extra...)
 		}
 		if r := needsExtract(runs); r != "" {
 			logf("skip  #%d: %s wrote its findings as text; run extract first", c.Number, r)
