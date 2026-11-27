@@ -59,10 +59,11 @@ GitHub token from `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`.
 ## How well it reviews
 
 [`docs/replay.md`](./docs/replay.md) replays surveyor and Claude Code's
-`/code-review` on merged pull requests, with a blind judge. On 30
-core-agent PRs, surveyor raised no false alarms, but it found 41% of the
-defects found by either reviewer to Claude Code's 93%, at less than half
-the cost.
+`/code-review`, PR-Agent and the CodeRabbit CLI on merged pull requests,
+with a blind judge. On 30 core-agent PRs, surveyor with an Opus finder
+caught as many known bugs as Claude Code (14 of 25), at about the same
+cost and with no false alarms, though Claude Code found more defects
+overall.
 
 ## License
 

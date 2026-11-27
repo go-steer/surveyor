@@ -132,6 +132,92 @@ Judging cost $32.56 in total ($1.09 per PR).
 - **Known bugs are a floor.** Defects nobody has fixed yet are counted
   only when a reviewer found them.
 
+## Second run: surveyor variants, PR-Agent and CodeRabbit (2026-11-27)
+
+The same 30 PRs. All nine reviewers were judged together in one blind
+pass, so the labels differ slightly from the first run's: the judge
+varies too. The full report is in
+[`replay/2026-11-core-agent-experiments.md`](./replay/2026-11-core-agent-experiments.md).
+
+The reviewers:
+- **surveyor:** its defaults (Sonnet 5.5 finder at `high`, verifier at
+  `medium`), run twice, and three variants:
+  - an Opus 5.5 finder (Sonnet verifier);
+  - `--finder-style broad`: report every suspected defect and let the
+    verifier filter;
+  - `--finder-steps 150`.
+- **PR-Agent** (`/review`, Sonnet 5.5 on Vertex):
+  - It ran in plain-diff mode on the same base...head diff, which cannot
+    post to the PR.
+  - It ran at its defaults (6 findings at most), and with 20.
+  - In this mode it does not read `AGENTS.md`, so a miss that depends on
+    the repo's rules is not a fair comparison.
+- **The CodeRabbit CLI** (`review --agent --deep`, free open-source
+  tier):
+  - It ran on the 14 known-bug PRs only, because of its rate limit.
+  - It ran on a local worktree against the merge base, with `AGENTS.md`
+    passed in.
+  - CodeRabbit says its CLI reviews differ from its hosted PR bot.
+
+| | Claude Code | surveyor | surveyor, again | **surveyor Opus finder** | surveyor broad | surveyor 150 steps | PR-Agent | PR-Agent 20 | CodeRabbit CLI |
+|---|---|---|---|---|---|---|---|---|---|
+| PRs | 30 | 30 | 30 | 30 | 30 | 30 | 30 | 30 | 14 |
+| real / nit / false alarm | 74 / 131 / 7 | 29 / 18 / 0 | 29 / 14 / 0 | 44 / 17 / 0 | 43 / 33 / 2 | 24 / 13 / 1 | 20 / 19 / 13 | 22 / 20 / 7 | 30 / 70 / 3 |
+| findings that are real | 35% | 62% | 67% | **72%** | 55% | 63% | 38% | 45% | 29% |
+| defects found | **69 of 106** | 29 | 29 | 44 | 43 | 24 | 19 | 19 | 26 of 95 |
+| known bugs caught | **14 of 25** | 10 | 8 | **14** | 10 | 8 | 9 | 8 | 7 of 25 |
+| cost per PR | $1.22 | $0.55 | $0.57 | $1.33 | $0.72 | $0.49 | $0.13 | $0.13 | free |
+| time per PR, mean | 219s | 92s | 97s | 153s | 122s | 94s | 31s | 32s | 630s |
+
+Judging cost $43.
+
+### What it says
+
+- **An Opus finder matches Claude Code on known bugs at the same cost.**
+  - Known bugs: 14 of 25, the same count as Claude Code but a different
+    set (10 shared, 3 only Opus, 4 only Claude Code).
+  - No false alarms, and 72% of its findings are real.
+  - Claude Code still finds more defects overall (69 vs 44), but 62% of
+    its findings are nits.
+- **Variance is the biggest lever.** Identical runs disagree:
+  - surveyor and its rerun found 29 defects each but only 14 in common,
+    44 together.
+  - All five surveyor runs together found 81 of 106 defects and 16 of
+    25 known bugs. Claude Code found 69 and 14.
+  - So several independent finder passes, deduplicated before
+    verification, should raise recall more than any single setting.
+    Two Sonnet passes (about $1.10) found as many defects as one Opus
+    pass.
+- **The step cap is not the limit.** No finder hit it: Sonnet averaged
+  13–15 model calls and Opus 24 (55 at most). Raising it to 150 changed
+  nothing. The finder stops on its own; breadth has to come from the
+  prompt or from more passes.
+- **The broad prompt helps recall (43 defects) but costs precision**
+  (2 false alarms). Its verifier refuted 4 findings: 2 false alarms
+  correctly, and 1 real finding by mistake. It is the only variant where
+  the verifier did meaningful work.
+- **Coverage is now recorded.** The only incomplete surveyor reviews were
+  #1445 (454KB) and #1463 (201KB), whose diffs were over the 200KB prompt
+  cap.
+- **PR-Agent is cheap and noisy.** At $0.13 a PR, 25% of its findings
+  were false alarms (14% with the cap at 20). It still caught 9 known
+  bugs.
+- **The CodeRabbit CLI was weak on this set.** It caught 7 of 25 known
+  bugs, and two thirds of its findings were nits, at about 10 minutes a review.
+  - That contrasts with CodeRabbit's hosted review of surveyor#10: 5 of 5
+    comments were valid, including a real bug in this report's known-bug
+    credit (fixed) and a real security gap in the harness.
+  - The hosted bot needs its own replay before it is judged.
+- **Robustness bugs found by the runs:**
+  - In about 3% of runs, one read-tool result overflowed the 1M-token
+    context. core-agent cut the turn, and surveyor reported it as
+    "interrupted" (#1448, #1557, #1581). The read tools need a per-result
+    size cap.
+  - On one Opus run (#1445), Vertex rejected a resent thinking block "bound
+    to a different conversation". core-agent or core-models resends
+    thinking blocks after the history has changed.
+  - Both passed on retry.
+
 ### Next experiments
 
 Each experiment is a surveyor variant: a reviewer named `surveyor-<name>`
@@ -144,7 +230,10 @@ bin/replay run   --dir $D --reviewers surveyor-opus --surveyor-args "--model cla
 bin/replay judge --dir $D --reviewers surveyor,claude-code,surveyor-opus
 ```
 
-1. Finder on Opus 5.5 at `high`.
-2. A finder prompt that asks for breadth: report every suspected defect
-   and let the verifier filter.
-3. A higher step cap, plus instrumentation of whether the cap was hit.
+1. **Several finder passes** (two or three Sonnet, or Sonnet plus Opus),
+   deduplicated, then verified.
+2. **The broad prompt with an Opus finder**, where the verifier has
+   something to filter.
+3. **CodeRabbit's hosted bot**, replayed through PRs on a scratch repo.
+4. **Each configuration run several times**, to put error bars on
+   these numbers.
