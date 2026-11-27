@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -89,6 +90,37 @@ type crEvent struct {
 	Outcome       string   `json:"outcome"`
 	Message       string   `json:"message"`
 	ReviewedFiles []string `json:"reviewedFiles"`
+	ErrorType     string   `json:"errorType"`
+	Metadata      struct {
+		WaitTime string `json:"waitTime"`
+	} `json:"metadata"`
+}
+
+// errRateLimited is a CodeRabbit rate limit; wait is how long it asked
+// for, or 0 if it did not say.
+type errRateLimited struct{ wait time.Duration }
+
+func (e errRateLimited) Error() string { return fmt.Sprintf("rate limited (wait %s)", e.wait) }
+
+// parseWait reads CodeRabbit's "14 minutes and 45 seconds".
+func parseWait(s string) time.Duration {
+	var d time.Duration
+	f := strings.Fields(strings.ReplaceAll(s, " and ", " "))
+	for i := 0; i+1 < len(f); i += 2 {
+		n, err := strconv.Atoi(f[i])
+		if err != nil {
+			return 0
+		}
+		switch strings.TrimSuffix(f[i+1], "s") {
+		case "hour":
+			d += time.Duration(n) * time.Hour
+		case "minute":
+			d += time.Duration(n) * time.Minute
+		case "second":
+			d += time.Duration(n) * time.Second
+		}
+	}
+	return d
 }
 
 func (rc *runConfig) runCodeRabbit(ctx context.Context, c Case, name string) (*Run, error) {
@@ -127,12 +159,16 @@ func (rc *runConfig) runCodeRabbit(ctx context.Context, c Case, name string) (*R
 		if perr != nil {
 			detail = perr.Error() + "; " + detail
 		}
-		low := strings.ToLower(detail)
-		if attempt < rc.crRetries && (strings.Contains(low, "rate") || strings.Contains(low, "limit") || strings.Contains(low, "quota")) {
+		var rl errRateLimited
+		if errors.As(perr, &rl) && attempt < rc.crRetries {
+			wait := rc.crWait
+			if rl.wait > 0 {
+				wait = rl.wait + time.Minute
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(rc.crWait):
+			case <-time.After(wait):
 			}
 			continue
 		}
@@ -161,6 +197,11 @@ func parseCodeRabbit(b []byte) (*Run, error) {
 			}
 			r.Findings = append(r.Findings, review.Finding{File: ev.FileName, Line: ev.StartLine, Severity: sev,
 				Category: ev.Severity, Summary: strings.TrimSpace(ev.Title), FailureScenario: strings.TrimSpace(ev.Comment)})
+		case "error":
+			if ev.ErrorType == "rate_limit" {
+				return nil, errRateLimited{wait: parseWait(ev.Metadata.WaitTime)}
+			}
+			return nil, fmt.Errorf("coderabbit error %s: %s", ev.ErrorType, ev.Message)
 		case "complete":
 			if ev.Status != "review_completed" {
 				return nil, fmt.Errorf("review ended %s (%s): %s", ev.Status, ev.Outcome, ev.Message)

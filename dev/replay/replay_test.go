@@ -17,10 +17,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-steer/surveyor/internal/review"
 )
@@ -235,5 +237,16 @@ func TestReportKnownBugAcrossGroups(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("report lacks %q\n%s", want, out.String())
 		}
+	}
+}
+
+func TestParseCodeRabbitRateLimit(t *testing.T) {
+	_, err := parseCodeRabbit([]byte(`{"type":"error","errorType":"rate_limit","message":"Rate limit exceeded","metadata":{"waitTime":"14 minutes and 45 seconds"}}`))
+	var rl errRateLimited
+	if !errors.As(err, &rl) || rl.wait != 14*time.Minute+45*time.Second {
+		t.Errorf("err = %v; want a rate limit asking for 14m45s", err)
+	}
+	if got := parseWait("1 hour and 2 minutes"); got != time.Hour+2*time.Minute {
+		t.Errorf("parseWait = %v", got)
 	}
 }
