@@ -57,10 +57,26 @@ Call submit_verdict exactly once, citing the files and lines you read.`
 // Finder styles. strict (the default) reports only failures the finder has
 // traced. broad reports every suspected defect with a concrete scenario and
 // leaves the filtering to the verifiers, trading verifier cost for recall.
+// omissions adds a completeness check to broad; lenses runs three broad
+// passes, each told to spend its calls on one area.
 const (
-	FinderStrict = "strict"
-	FinderBroad  = "broad"
+	FinderStrict    = "strict"
+	FinderBroad     = "broad"
+	FinderOmissions = "omissions"
+	FinderLenses    = "lenses"
 )
+
+// completenessCheck targets defects no changed line shows: the update a
+// change needed somewhere it did not touch.
+const completenessCheck = `- Completeness: when the change adds something that has siblings (a struct field, a config key, an enum value or option, a file format or loader path, an event or message kind, a backend), find every place that enumerates the siblings: copy and merge functions, serializers and writers, validation, switch statements, defaults, other loaders or entry points, docs and schemas. Check that the new one is handled in each. A missing update is a defect even though no changed line is wrong.
+- Parallel paths: when the change adds or fixes behaviour on one path (one entry point, transport, backend or mode), check the sibling paths that should behave the same way.`
+
+var lensFocus = []string{
+	`This pass focuses on logic and contracts: wrong results for some input, nil, empty and boundary values, error paths that are dropped or leave state half-changed, and whether the change keeps the promises its comments, docs, tests and callers rely on.`,
+	`This pass focuses on completeness and consistency:
+` + completenessCheck,
+	`This pass focuses on concurrency, resources, security and API use: races, lock order, goroutine and context lifetimes, resources not closed, untrusted input reaching a shell, path, query or log, permission checks bypassed, and the real signatures and semantics of the libraries the change calls (read them in the dependency source).`,
+}
 
 const strictTrace = `- Before reporting, trace the failure: name the inputs or state, follow them through the code you read, and state the wrong result. If you cannot trace it, do not report it.
 - Do not report formatting, naming or style preferences, anything a linter or the compiler already catches, or speculative concerns ("might", "could potentially") without a traced failure.`
@@ -83,14 +99,24 @@ Record every problem it describes with a file location, in its order, copying it
 
 When done, reply with the number of findings you recorded.`
 
-func finderInstruction(style string) (string, error) {
-	trace, closing := strictTrace, strictClose
+// finderInstructions returns one instruction per finder pass for a style.
+func finderInstructions(style string) ([]string, error) {
+	build := func(trace, closing string) string {
+		return strings.NewReplacer("%TRACE%", trace, "%CLOSE%", closing).Replace(finderBase)
+	}
 	switch style {
 	case "", FinderStrict:
+		return []string{build(strictTrace, strictClose)}, nil
 	case FinderBroad:
-		trace, closing = broadTrace, broadClose
-	default:
-		return "", fmt.Errorf("review: finder style must be %s or %s, not %q", FinderStrict, FinderBroad, style)
+		return []string{build(broadTrace, broadClose)}, nil
+	case FinderOmissions:
+		return []string{build(broadTrace+"\n"+completenessCheck, broadClose)}, nil
+	case FinderLenses:
+		out := make([]string, len(lensFocus))
+		for i, focus := range lensFocus {
+			out[i] = build(broadTrace+"\n- "+focus+" Other passes cover the other areas, so spend your calls here, but report any defect you find.", broadClose)
+		}
+		return out, nil
 	}
-	return strings.NewReplacer("%TRACE%", trace, "%CLOSE%", closing).Replace(finderBase), nil
+	return nil, fmt.Errorf("review: finder style must be %s, %s, %s or %s, not %q", FinderStrict, FinderBroad, FinderOmissions, FinderLenses, style)
 }

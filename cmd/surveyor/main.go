@@ -66,7 +66,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	alsoModels := fs.String("also-model", "", "comma-separated models for further finder passes alongside --model")
 	level := fs.String("level", "high", "finder thinking level (minimal..max)")
 	verifyLevel := fs.String("verify-level", "medium", "verifier thinking level")
-	finderStyle := fs.String("finder-style", review.FinderStrict, "finder prompt: strict (report only traced failures) or broad (report every suspected defect; the verifiers filter)")
+	finderStyle := fs.String("finder-style", review.FinderStrict, "finder prompt: strict (report only traced failures), broad (report every suspected defect; the verifiers filter), omissions (broad plus a completeness check) or lenses (three broad passes, each on one area)")
 	finderSteps := fs.Int("finder-steps", 60, "finder model-call cap")
 	verifySteps := fs.Int("verify-steps", 25, "verifier model-call cap")
 	project := fs.String("project", envOr("ANTHROPIC_VERTEX_PROJECT_ID", "go-steer-drydock"), "GCP project for Vertex AI")

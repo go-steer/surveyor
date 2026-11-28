@@ -145,17 +145,29 @@ func Review(ctx context.Context, in Input, opt Options) (*Result, error) {
 	tracker := usage.NewTracker()
 
 	sink := &findingSink{}
-	finders := append([]adkmodel.LLM{opt.Finder}, opt.MoreFinders...)
-	runs := make([]AgentRun, len(finders))
-	errs := make([]error, len(finders))
+	instructions, err := finderInstructions(opt.FinderStyle)
+	if err != nil {
+		return nil, err
+	}
+	// One pass per finder model and instruction (a style can have several).
+	type pass struct {
+		model       adkmodel.LLM
+		instruction string
+	}
+	var passes []pass
+	for _, m := range append([]adkmodel.LLM{opt.Finder}, opt.MoreFinders...) {
+		for _, ins := range instructions {
+			passes = append(passes, pass{m, ins})
+		}
+	}
+	runs := make([]AgentRun, len(passes))
+	errs := make([]error, len(passes))
 	var wg sync.WaitGroup
-	for i, m := range finders {
+	for i, p := range passes {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			o := opt
-			o.Finder = m
-			runs[i], errs[i] = runFinder(ctx, in, o, tracker, sink)
+			runs[i], errs[i] = runFinder(ctx, in, opt, tracker, sink, p.model, p.instruction)
 		}()
 	}
 	wg.Wait()
@@ -322,16 +334,12 @@ func run(ctx context.Context, a *agent.Agent, prompt string, tracker *usage.Trac
 	return r, nil
 }
 
-func runFinder(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, sink *findingSink) (AgentRun, error) {
+func runFinder(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, sink *findingSink, model adkmodel.LLM, instruction string) (AgentRun, error) {
 	report, err := newReportTool(sink)
 	if err != nil {
 		return AgentRun{}, err
 	}
-	instruction, err := finderInstruction(opt.FinderStyle)
-	if err != nil {
-		return AgentRun{}, err
-	}
-	spec := AgentSpec{Model: opt.Finder, Instruction: instruction, Level: opt.FinderLevel, MaxSteps: opt.FinderMaxSteps, Tools: []tool.Tool{report}}
+	spec := AgentSpec{Model: model, Instruction: instruction, Level: opt.FinderLevel, MaxSteps: opt.FinderMaxSteps, Tools: []tool.Tool{report}}
 	r, err := RunAgent(ctx, in, opt, tracker, spec, finderPrompt(in, opt.MaxDiffBytes))
 	if err != nil {
 		return r, fmt.Errorf("review: finder: %w", err)
@@ -381,6 +389,18 @@ func verifyAll(ctx context.Context, in Input, opt Options, tracker *usage.Tracke
 		}
 	}
 	return verified, refuted, capped, nil
+}
+
+// Verify runs one verifier over a finding, as a review does after its
+// finder, and returns the finding with its verdict. Measurement tools use it
+// to test the verifier on findings whose truth is already known.
+func Verify(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, f Finding) (Finding, error) {
+	if opt.Verifier == nil {
+		return f, errors.New("review: Verifier model is required")
+	}
+	opt = withDefaults(opt)
+	f, _, err := verifyOne(ctx, in, opt, tracker, f)
+	return f, err
 }
 
 func verifyOne(ctx context.Context, in Input, opt Options, tracker *usage.Tracker, f Finding) (Finding, bool, error) {

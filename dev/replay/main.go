@@ -21,6 +21,7 @@
 //	replay extract --dir D
 //	replay judge  --dir D
 //	replay report --dir D > D/report.md
+//	replay verify-audit --dirs D1,D2 --out audit.json
 //
 // select writes D/cases.json. run reviews every case with every reviewer
 // and writes D/pr-N/<reviewer>.json; it skips results that exist, so an
@@ -30,7 +31,9 @@
 // unlabelled, to a blind judge (Opus on Vertex AI, reading the code at
 // the PR's head) that labels it real, nit or false positive, groups
 // findings about the same defect, and matches them to D/known-bugs.json:
-// defects a later PR fixed. report prints the comparison.
+// defects a later PR fixed. report prints the comparison. verify-audit
+// runs surveyor's verifier on findings the judge has labelled, to see
+// whether it refutes the false alarms and keeps the real ones.
 //
 // The reviewers: "surveyor" runs the surveyor binary (--surveyor) with
 // --json, and "surveyor-<variant>" does the same with that run's
@@ -59,7 +62,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: replay select|run|extract|judge|report --dir DIR [flags]")
+		_, _ = fmt.Fprintln(stderr, "usage: replay select|run|extract|judge|report|verify-audit --dir DIR [flags]")
 		return 2
 	}
 	var err error
@@ -72,6 +75,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		err = cmdExtract(ctx, args[1:], stderr)
 	case "judge":
 		err = cmdJudge(ctx, args[1:], stderr)
+	case "verify-audit":
+		err = cmdVerifyAudit(ctx, args[1:], stdout, stderr)
 	case "report":
 		err = cmdReport(args[1:], stdout, stderr)
 	default:

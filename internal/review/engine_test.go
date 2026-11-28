@@ -323,3 +323,44 @@ func TestReviewSalvagesCappedFinder(t *testing.T) {
 		t.Errorf("findings = %+v, coverage = %+v; want the salvaged finding verified", res.Findings, res.Coverage)
 	}
 }
+
+func TestReviewFinderStyles(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root+"/main.go", "package main\n")
+	in := Input{PR: PullRequest{Repo: "o/r", Number: 1, Diff: "diff --git a/main.go b/main.go\n"}, Workdir: root}
+	var mu sync.Mutex
+	var systems []string
+	finder := &scriptLLM{step: func(req *adkmodel.LLMRequest) *genai.Content {
+		mu.Lock()
+		systems = append(systems, systemText(req))
+		mu.Unlock()
+		return nil
+	}}
+	quiet := &scriptLLM{step: func(*adkmodel.LLMRequest) *genai.Content { return nil }}
+
+	if _, err := Review(context.Background(), in, Options{Finder: finder, Verifier: quiet, FinderStyle: FinderLenses}); err != nil {
+		t.Fatal(err)
+	}
+	if len(systems) != 3 {
+		t.Fatalf("lenses ran %d passes, want 3", len(systems))
+	}
+	for _, want := range []string{"logic and contracts", "completeness and consistency", "concurrency, resources, security"} {
+		found := 0
+		for _, s := range systems {
+			if strings.Contains(s, want) {
+				found++
+			}
+		}
+		if found != 1 {
+			t.Errorf("%d lens passes focus on %q, want exactly 1", found, want)
+		}
+	}
+
+	systems = nil
+	if _, err := Review(context.Background(), in, Options{Finder: finder, Verifier: quiet, FinderStyle: FinderOmissions}); err != nil {
+		t.Fatal(err)
+	}
+	if len(systems) != 1 || !strings.Contains(systems[0], "A missing update is a defect") || !strings.Contains(systems[0], "a missed defect costs more here") {
+		t.Errorf("omissions should be one broad pass with the completeness check:\n%v", systems)
+	}
+}
