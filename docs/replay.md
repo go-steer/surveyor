@@ -218,6 +218,73 @@ Judging cost $43.
     thinking blocks after the history has changed.
   - Both passed on retry.
 
+## Third run: Gemini finders and Opus variance (2026-11-27)
+
+The same 30 PRs. Seven reviewers were judged together in one blind pass:
+Claude Code, surveyor at its defaults, two identical Opus-finder runs, and
+three Gemini finders. surveyor now opens Gemini on Vertex AI, choosing the
+provider by model name. Each Gemini finder ran with a Sonnet 5.5 verifier.
+
+- **Prices used** (core-models v0.16.0 catalog, rates of 2026-11-20):
+  - Gemini 4 Neon: $3 in / $15 out per million tokens.
+  - Gemini 4 Hydrogen: $1.50 / $7.50.
+- **When:** runs started 2026-11-27 21:56 UTC.
+- **Gemini 4 Argon** was started and then dropped:
+  - At this task it read millions of tokens per PR, costing $6.85–11.30
+    a large PR.
+  - On #1448 it hit the step cap with its findings still unreported.
+- **The full report** is in
+  [`replay/2026-11-core-agent-batch3.md`](./replay/2026-11-core-agent-batch3.md).
+
+| | Claude Code | surveyor | Opus finder | Opus finder, again | **Neon `high`** | Hydrogen `high` | Hydrogen `medium` |
+|---|---|---|---|---|---|---|---|
+| real / nit / false alarm | 82 / 122 / 8 | 30 / 17 / 0 | 46 / 15 / 0 | 47 / 16 / 0 | 77 / 36 / 0 | 52 / 13 / 1 | 14 / 5 / 0 |
+| findings that are real | 39% | 64% | 75% | 75% | 68% | 79% | 74% |
+| defects found (of 127) | **77** | 30 | 46 | 46 | **76** | 51 | 13 |
+| known bugs caught (of 25) | **14** | 10 | **14** | 11 | **14** | 12 | 4 |
+| cost per PR | $1.22 | $0.55 | $1.33 | $1.42 | $6.39 | $2.41 | $0.48 |
+| time per PR, mean | 219s | 92s | 153s | 166s | 506s | 246s | 109s |
+
+Judging cost about $55.
+
+### What it says
+
+- **Neon at `high` matches Claude Code's recall without its noise.**
+  - It found 76 defects to Claude Code's 77, and the same 14 known bugs
+    by count, though not the same set.
+  - It raised no false alarms, and 68% of its findings were real
+    (Claude Code: 39%).
+  - It costs $6.39 a PR, about five times Claude Code, and takes over
+    8 minutes.
+- **Hydrogen `high` is the value pick.** 51 defects and 12 known bugs at
+  $2.41, with the highest share of real findings (79%). At `medium` it
+  barely looks (13 calls on average) and finds little.
+- **Opus varies run to run.** Two identical runs found 46 defects each,
+  but caught 14 and 11 known bugs. Together: 58 defects, 15 known bugs.
+- **Combining different models pays more than repeating one.** Unions of
+  two runs' findings, which is what the engine's new `--also-model`
+  passes produce:
+
+  | finders | defects | known bugs | cost per PR |
+  |---|---|---|---|
+  | Opus + Hydrogen `high` | 74 | 18 | $3.74 |
+  | Opus + Neon | 93 | 19 | $7.72 |
+  | Opus + Opus | 58 | 15 | $2.75 |
+  | Claude Code alone | 77 | 14 | $1.22 |
+
+  Five known bugs were caught by no reviewer here: #1197, #1431's
+  endpoint URL, #1463, #1468's skill-level auth, and #1512's user-role
+  audit event.
+- **The verifier still rarely acts.** Across these runs it refuted 2
+  findings, both real. It earns its cost only where the finder is
+  broad.
+- **Coverage:**
+  - No finder hit its step cap on these runs.
+  - The only incomplete reviews were the two over-cap diffs, #1445 and
+    #1463.
+  - A capped finder's findings are now salvaged from its final text, so
+    a cap no longer loses them.
+
 ### Next experiments
 
 Each experiment is a surveyor variant: a reviewer named `surveyor-<name>`
@@ -230,8 +297,8 @@ bin/replay run   --dir $D --reviewers surveyor-opus --surveyor-args "--model cla
 bin/replay judge --dir $D --reviewers surveyor,claude-code,surveyor-opus
 ```
 
-1. **Several finder passes** (two or three Sonnet, or Sonnet plus Opus),
-   deduplicated, then verified.
+1. **Several finder passes** with the engine's `--also-model`, measured
+   end to end: Opus with Hydrogen `high`, deduplicated, then verified.
 2. **The broad prompt with an Opus finder**, where the verifier has
    something to filter.
 3. **CodeRabbit's hosted bot**, replayed through PRs on a scratch repo.

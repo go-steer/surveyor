@@ -137,6 +137,6 @@ func (rc *runConfig) price(model string, in, out int) float64 {
 	if rc.claude == nil {
 		return 0
 	}
-	p := usage.PriceOnCatalog(rc.claude.Pricing, rc.claude.Backend, model)
+	p := usage.PriceOnCatalog(rc.claude.Pricing, rc.claude.Backend(model), model)
 	return (float64(in)*p.InputPerMTok + float64(out)*p.OutputPerMTok) / 1e6
 }

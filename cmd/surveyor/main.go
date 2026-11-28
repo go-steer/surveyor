@@ -38,6 +38,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	adkmodel "google.golang.org/adk/v2/model"
+
 	"github.com/go-steer/surveyor/internal/review"
 	"github.com/go-steer/surveyor/internal/source"
 	"github.com/go-steer/surveyor/internal/vertex"
@@ -59,14 +61,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	repo := fs.String("repo", "", "repository, owner/name")
 	pr := fs.Int("pr", 0, "pull request number")
-	model := fs.String("model", "claude-sonnet-5-5", "finder model")
+	model := fs.String("model", "claude-sonnet-5-5", "finder model (claude-* or gemini-*)")
 	verifyModel := fs.String("verify-model", "", "verifier model (default: --model)")
+	alsoModels := fs.String("also-model", "", "comma-separated models for further finder passes alongside --model")
 	level := fs.String("level", "high", "finder thinking level (minimal..max)")
 	verifyLevel := fs.String("verify-level", "medium", "verifier thinking level")
 	finderStyle := fs.String("finder-style", review.FinderStrict, "finder prompt: strict (report only traced failures) or broad (report every suspected defect; the verifiers filter)")
 	finderSteps := fs.Int("finder-steps", 60, "finder model-call cap")
 	verifySteps := fs.Int("verify-steps", 25, "verifier model-call cap")
-	project := fs.String("project", envOr("ANTHROPIC_VERTEX_PROJECT_ID", "go-steer-drydock"), "GCP project for Claude on Vertex AI")
+	project := fs.String("project", envOr("ANTHROPIC_VERTEX_PROJECT_ID", "go-steer-drydock"), "GCP project for Vertex AI")
 	region := fs.String("region", envOr("CLOUD_ML_REGION", "global"), "Vertex AI region")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
 	keep := fs.Bool("keep", false, "keep the checkout and print its path")
@@ -124,6 +127,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
+	var more []adkmodel.LLM
+	for _, name := range strings.Split(*alsoModels, ",") {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		m, err := claude.Model(ctx, name)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		more = append(more, m)
+	}
 	verifier := finder
 	if *verifyModel != *model {
 		if verifier, err = claude.Model(ctx, *verifyModel); err != nil {
@@ -133,10 +147,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	_, _ = fmt.Fprintf(stderr, "surveyor: reviewing %s#%d (%s) with %s\n", *repo, *pr, short(p.HeadSHA), *model)
 	res, err := review.Review(ctx, review.Input{PR: p, Workdir: dir, Rules: rules, ReadOnlyRoots: readOnly}, review.Options{
-		Finder: finder, Verifier: verifier,
+		Finder: finder, Verifier: verifier, MoreFinders: more,
 		FinderLevel: *level, VerifierLevel: *verifyLevel,
 		FinderStyle: *finderStyle, FinderMaxSteps: *finderSteps, VerifierMaxSteps: *verifySteps,
-		Pricing: claude.Pricing, Backend: claude.Backend,
+		Pricing: claude.Pricing, Backends: claude.Backends(),
 	})
 	if err != nil {
 		return fail(stderr, err)

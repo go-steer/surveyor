@@ -150,7 +150,7 @@ func cmdJudge(ctx context.Context, args []string, stderr io.Writer) error {
 				return
 			}
 			j, err := judgeCase(ctx, *dir, token, modCache, c, runs, bugsFor(known, c.Number),
-				review.Options{Pricing: claude.Pricing, Backend: claude.Backend}, m, *model, *level)
+				review.Options{Pricing: claude.Pricing, Backends: claude.Backends()}, m, *model, *level)
 			if err == nil {
 				err = writeJSON(out, j)
 			}

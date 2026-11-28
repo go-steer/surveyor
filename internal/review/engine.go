@@ -64,6 +64,11 @@ type Options struct {
 	// Finder and Verifier are the models for the two passes; they may be
 	// the same model.
 	Finder, Verifier adkmodel.LLM
+	// MoreFinders are further finder passes, run alongside Finder at the
+	// same level into one list of findings: independent passes miss
+	// different defects. Exact duplicates are dropped before
+	// verification.
+	MoreFinders []adkmodel.LLM
 	// FinderLevel and VerifierLevel are thinking levels (minimal..max);
 	// empty leaves the provider default.
 	FinderLevel, VerifierLevel string
@@ -79,9 +84,12 @@ type Options struct {
 	// it the finder gets the file list and reads the files. Default
 	// 200,000.
 	MaxDiffBytes int
-	// Pricing and Backend price the usage; both optional.
-	Pricing *pricing.Catalog
-	Backend string
+	// Pricing and Backend price the usage; both optional. Backends
+	// overrides Backend per model name, for reviews whose finder and
+	// verifier run on different providers.
+	Pricing  *pricing.Catalog
+	Backend  string
+	Backends map[string]string
 }
 
 // Result is a finished review.
@@ -106,11 +114,14 @@ type Coverage struct {
 	// over MaxDiffBytes, so the finder got only the file list.
 	DiffBytes     int  `json:"diff_bytes"`
 	DiffTruncated bool `json:"diff_truncated"`
-	// FinderCalls is the finder's model calls; FinderHitCap is set when it
-	// reached FinderMaxSteps and had to stop.
+	// FinderCalls is the finders' model calls, summed over passes;
+	// FinderHitCap is set when any pass reached FinderMaxSteps.
 	FinderCalls    int  `json:"finder_calls"`
 	FinderMaxSteps int  `json:"finder_max_steps"`
 	FinderHitCap   bool `json:"finder_hit_cap"`
+	// FinderSalvaged counts findings a capped finder wrote as text,
+	// recorded afterwards so they are still verified.
+	FinderSalvaged int `json:"finder_salvaged,omitempty"`
 	// VerifiersHitCap counts verifiers that reached VerifierMaxSteps.
 	VerifiersHitCap int `json:"verifiers_hit_cap"`
 }
@@ -134,9 +145,30 @@ func Review(ctx context.Context, in Input, opt Options) (*Result, error) {
 	tracker := usage.NewTracker()
 
 	sink := &findingSink{}
-	finder, err := runFinder(ctx, in, opt, tracker, sink)
-	if err != nil {
+	finders := append([]adkmodel.LLM{opt.Finder}, opt.MoreFinders...)
+	runs := make([]AgentRun, len(finders))
+	errs := make([]error, len(finders))
+	var wg sync.WaitGroup
+	for i, m := range finders {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			o := opt
+			o.Finder = m
+			runs[i], errs[i] = runFinder(ctx, in, o, tracker, sink)
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
 		return nil, err
+	}
+	// The first finder's summary describes the change; coverage counts
+	// every pass, and any pass at its cap makes the review incomplete.
+	finder := runs[0]
+	for _, r := range runs[1:] {
+		finder.ModelCalls += r.ModelCalls
+		finder.HitStepCap = finder.HitStepCap || r.HitStepCap
+		finder.Salvaged += r.Salvaged
 	}
 	verified, refuted, capped, err := verifyAll(ctx, in, opt, tracker, sink.all())
 	if err != nil {
@@ -152,11 +184,20 @@ func Review(ctx context.Context, in Input, opt Options) (*Result, error) {
 			FinderCalls:     finder.ModelCalls,
 			FinderMaxSteps:  opt.FinderMaxSteps,
 			FinderHitCap:    finder.HitStepCap,
+			FinderSalvaged:  finder.Salvaged,
 			VerifiersHitCap: capped,
 		},
 		Usage:    tracker.Totals(),
 		Duration: time.Since(start),
 	}, nil
+}
+
+// backendFor is the billing backend for a model.
+func (opt Options) backendFor(model string) string {
+	if b, ok := opt.Backends[model]; ok {
+		return b
+	}
+	return opt.Backend
 }
 
 func withDefaults(opt Options) Options {
@@ -197,6 +238,8 @@ type AgentRun struct {
 	// to report with what it had.
 	ModelCalls int
 	HitStepCap bool
+	// Salvaged counts findings recorded from a capped finder's text.
+	Salvaged int
 }
 
 // RunAgent runs one turn of a sandboxed agent that can read only
@@ -235,8 +278,8 @@ func newAgent(spec AgentSpec, in Input, opt Options, tracker *usage.Tracker) (*a
 	if opt.Pricing != nil {
 		opts = append(opts, agent.WithPricingCatalog(opt.Pricing))
 	}
-	if opt.Backend != "" {
-		opts = append(opts, agent.WithBillingBackend(opt.Backend))
+	if b := opt.backendFor(spec.Model.Name()); b != "" {
+		opts = append(opts, agent.WithBillingBackend(b))
 	}
 	return agent.New(spec.Model, opts...)
 }
@@ -248,7 +291,7 @@ func run(ctx context.Context, a *agent.Agent, prompt string, tracker *usage.Trac
 	var (
 		r    AgentRun
 		tap  usage.TurnTap
-		rate = usage.PriceOnCatalog(opt.Pricing, opt.Backend, a.ModelName())
+		rate = usage.PriceOnCatalog(opt.Pricing, opt.backendFor(a.ModelName()), a.ModelName())
 	)
 	for ev, err := range a.Run(ctx, prompt) {
 		if err != nil {
@@ -292,6 +335,18 @@ func runFinder(ctx context.Context, in Input, opt Options, tracker *usage.Tracke
 	r, err := RunAgent(ctx, in, opt, tracker, spec, finderPrompt(in, opt.MaxDiffBytes))
 	if err != nil {
 		return r, fmt.Errorf("review: finder: %w", err)
+	}
+	if r.HitStepCap && strings.TrimSpace(r.Text) != "" {
+		// At the cap core-agent takes every tool away for one last call,
+		// so a finder that saved findings for the end writes them as
+		// text. Record them (with the verifier's model) so they are
+		// verified, not lost.
+		before := len(sink.all())
+		salvage := AgentSpec{Model: opt.Verifier, Instruction: salvageInstruction, Level: "low", MaxSteps: 40, Tools: []tool.Tool{report}}
+		if _, err := RunAgent(ctx, in, opt, tracker, salvage, "<review_text>\n"+r.Text+"\n</review_text>"); err != nil {
+			return r, fmt.Errorf("review: salvaging the finder's text: %w", err)
+		}
+		r.Salvaged = len(sink.all()) - before
 	}
 	return r, nil
 }

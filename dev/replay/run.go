@@ -50,7 +50,7 @@ type runConfig struct {
 	prAgentEnv    []string
 	project       string
 	region        string
-	claude        *vertex.Claude // prices PR-Agent's tokens
+	claude        *vertex.Models // prices PR-Agent's tokens
 
 	crDeep    bool
 	crRetries int
@@ -89,6 +89,10 @@ func cmdRun(ctx context.Context, args []string, stderr io.Writer) error {
 	if strings.Contains(*reviewers, "pr-agent") {
 		cl, err := vertex.Open(rc.project, rc.region)
 		if err != nil {
+			return err
+		}
+		// Opening the model records its billing backend for pricing.
+		if _, err := cl.Model(ctx, strings.TrimPrefix(rc.prAgentModel, "vertex_ai/")); err != nil {
 			return err
 		}
 		rc.claude = cl

@@ -80,7 +80,7 @@ func cmdExtract(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	opt := review.Options{Pricing: claude.Pricing, Backend: claude.Backend}
+	opt := review.Options{Pricing: claude.Pricing, Backends: claude.Backends()}
 	for _, c := range cases {
 		path := resultPath(*dir, c.Number, "claude-code")
 		var r Run
