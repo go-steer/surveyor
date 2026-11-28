@@ -182,3 +182,144 @@ func TestDiffHelpers(t *testing.T) {
 		t.Error("fileDiff for an untouched file should be empty")
 	}
 }
+
+// systemText is the request's system instruction.
+func systemText(req *adkmodel.LLMRequest) string {
+	var b strings.Builder
+	if req.Config != nil && req.Config.SystemInstruction != nil {
+		for _, p := range req.Config.SystemInstruction.Parts {
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
+}
+
+func TestReviewCoverage(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root+"/main.go", "package main\n")
+	diff := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1 +1,2 @@\n package main\n+var x = 1\n"
+	in := Input{PR: PullRequest{Repo: "o/r", Number: 1, Diff: diff}, Workdir: root}
+
+	// A finder that never stops calling tools while it has them: it runs
+	// into its cap, and so does each verifier.
+	var finderSystem string
+	busy := func(call *genai.FunctionCall) *scriptLLM {
+		return &scriptLLM{step: func(req *adkmodel.LLMRequest) *genai.Content {
+			if req.Config == nil || len(req.Config.Tools) == 0 {
+				return &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "out of calls"}}}
+			}
+			if strings.Contains(systemText(req), "reviewing a pull request") {
+				finderSystem = systemText(req)
+			}
+			return calls(call)
+		}}
+	}
+	finder := busy(finding("f", "main.go", 2, "important", "Same claim every time"))
+	verifier := busy(&genai.FunctionCall{ID: "s", Name: "stat", Args: map[string]any{"path": "main.go"}})
+	res, err := Review(context.Background(), in, Options{Finder: finder, Verifier: verifier,
+		FinderStyle: FinderBroad, FinderMaxSteps: 3, VerifierMaxSteps: 2, MaxDiffBytes: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := res.Coverage
+	if !c.FinderHitCap || c.FinderCalls != 4 || c.FinderMaxSteps != 3 {
+		t.Errorf("finder coverage = %+v; want the cap hit after 3 calls plus the final report", c)
+	}
+	if c.VerifiersHitCap != 1 {
+		t.Errorf("VerifiersHitCap = %d, want 1", c.VerifiersHitCap)
+	}
+	if !c.DiffTruncated || c.DiffBytes != len(diff) {
+		t.Errorf("diff coverage = %+v; want truncated at 10 bytes", c)
+	}
+	if c.Complete() {
+		t.Error("Complete() = true for a capped review")
+	}
+	if !strings.Contains(finderSystem, "a missed defect costs more here than a wrong one") {
+		t.Errorf("FinderBroad did not select the broad prompt:\n%s", finderSystem)
+	}
+
+	// A finder that answers at once read the whole (small) change.
+	quick := &scriptLLM{step: func(*adkmodel.LLMRequest) *genai.Content { return nil }}
+	res, err = Review(context.Background(), in, Options{Finder: quick, Verifier: quick})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Coverage.Complete() || res.Coverage.FinderCalls != 1 {
+		t.Errorf("coverage = %+v; want complete after one call", res.Coverage)
+	}
+
+	if _, err := Review(context.Background(), in, Options{Finder: quick, Verifier: quick, FinderStyle: "loose"}); err == nil {
+		t.Error("unknown finder style: want an error")
+	}
+}
+
+func TestReviewMoreFinders(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root+"/main.go", "package main\n")
+	in := Input{PR: PullRequest{Repo: "o/r", Number: 1, Diff: "diff --git a/main.go b/main.go\n"}, Workdir: root}
+	finderReporting := func(fcs ...*genai.FunctionCall) *scriptLLM {
+		return &scriptLLM{step: func(req *adkmodel.LLMRequest) *genai.Content {
+			if hasToolResponse(req) {
+				return nil
+			}
+			return calls(fcs...)
+		}}
+	}
+	a := finderReporting(finding("a", "main.go", 1, "important", "Shared defect"), finding("b", "main.go", 2, "important", "Only A sees this"))
+	b := finderReporting(finding("c", "main.go", 1, "important", "Shared defect"), finding("d", "main.go", 3, "important", "Only B sees this"))
+	confirm := &scriptLLM{step: func(req *adkmodel.LLMRequest) *genai.Content {
+		if hasToolResponse(req) {
+			return nil
+		}
+		return calls(&genai.FunctionCall{ID: "v", Name: "submit_verdict", Args: map[string]any{"verdict": "confirmed", "reasoning": "read it"}})
+	}}
+	res, err := Review(context.Background(), in, Options{Finder: a, MoreFinders: []adkmodel.LLM{b}, Verifier: confirm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range res.Findings {
+		got[f.Summary] = true
+	}
+	if len(res.Findings) != 3 || !got["Shared defect"] || !got["Only A sees this"] || !got["Only B sees this"] {
+		t.Errorf("findings = %+v; want the union of both passes with the shared one once", res.Findings)
+	}
+	if res.Coverage.FinderCalls != 4 {
+		t.Errorf("FinderCalls = %d, want 4 (two calls per pass)", res.Coverage.FinderCalls)
+	}
+}
+
+// TestReviewSalvagesCappedFinder: a finder that reaches its cap and writes
+// its finding as text still gets that finding verified.
+func TestReviewSalvagesCappedFinder(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root+"/main.go", "package main\n")
+	in := Input{PR: PullRequest{Repo: "o/r", Number: 1, Diff: "diff --git a/main.go b/main.go\n"}, Workdir: root}
+	finder := &scriptLLM{step: func(req *adkmodel.LLMRequest) *genai.Content {
+		if req.Config == nil || len(req.Config.Tools) == 0 {
+			return &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "Findings: main.go:1 (important) the slice index panics on empty input."}}}
+		}
+		return calls(&genai.FunctionCall{ID: "s", Name: "stat", Args: map[string]any{"path": "main.go"}})
+	}}
+	var salvagePrompt string
+	verifier := &scriptLLM{step: func(req *adkmodel.LLMRequest) *genai.Content {
+		if hasToolResponse(req) {
+			return nil
+		}
+		if strings.Contains(userText(req), "<review_text>") {
+			salvagePrompt = userText(req)
+			return calls(finding("r", "main.go", 1, "important", "Slice index panics on empty input"))
+		}
+		return calls(&genai.FunctionCall{ID: "v", Name: "submit_verdict", Args: map[string]any{"verdict": "confirmed", "reasoning": "read it"}})
+	}}
+	res, err := Review(context.Background(), in, Options{Finder: finder, Verifier: verifier, FinderMaxSteps: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(salvagePrompt, "the slice index panics") {
+		t.Errorf("salvage prompt lacks the finder's text: %q", salvagePrompt)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Verdict != VerdictConfirmed || res.Coverage.FinderSalvaged != 1 || !res.Coverage.FinderHitCap {
+		t.Errorf("findings = %+v, coverage = %+v; want the salvaged finding verified", res.Findings, res.Coverage)
+	}
+}
